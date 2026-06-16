@@ -1,0 +1,19 @@
+# Arquivos gerados pelo compilador (C++ Binaries)
+build/
+.pyd
+.dll
+.exe
+.o
+.obj
+
+# Configurações locais do VS Code
+.vscode/
+
+# Arquivos temporários do Python
+__pycache__/
+*.pyc
+
+# Dados da competição (opcional - bom ignorar se forem muito grandes, mas se quiser subir, pode apagar a linha abaixo)
+dados/EarlyDatasets/
+dados/LateDatasets/
+dados/HiddenDatasets/
