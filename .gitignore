@@ -4,7 +4,7 @@ build/
 .dll
 .exe
 .o
-.obj
+.objgit 
 
 # Configurações locais do VS Code
 .vscode/
@@ -13,7 +13,7 @@ build/
 __pycache__/
 *.pyc
 
-# Dados da competição (opcional - bom ignorar se forem muito grandes, mas se quiser subir, pode apagar a linha abaixo)
+# Dados da competição 
 dados/EarlyDatasets/
 dados/LateDatasets/
 dados/HiddenDatasets/

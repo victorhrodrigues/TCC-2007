@@ -22,3 +22,5 @@ pybind11_add_module(core_otimizador ${SOURCES})
 
 # Informa onde estão os arquivos de cabeçalho (.hpp)
 target_include_directories(core_otimizador PRIVATE src)
+# Força o compilador a salvar o arquivo .pyd diretamente na raiz do projeto
+set_target_properties(core_otimizador PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}")
