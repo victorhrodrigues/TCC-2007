@@ -1,7 +1,8 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h> 
-#include "Instancia.hpp"
-#include "Parser.hpp"
+#include "dados/Instancia.hpp"
+#include "dados/Parser.hpp"
+#include "solucao/GradeHoraria.hpp"
 
 namespace py = pybind11;
 
@@ -31,4 +32,12 @@ PYBIND11_MODULE(core_otimizador, m) {
     // Parser
     py::class_<Parser>(m, "Parser")
         .def_static("carregar_ctt", &Parser::carregar_ctt);
+
+    py::class_<GradeHoraria>(m, "GradeHoraria")
+        .def(py::init<const Instancia&>()) // Construtor recebendo a instância
+        .def("alocar_aula", &GradeHoraria::alocar_aula)
+        .def("remover_aula", &GradeHoraria::remover_aula)
+        .def("obter_disciplina_na_gaveta", &GradeHoraria::obter_disciplina_na_gaveta)
+        .def("espaco_esta_livre", &GradeHoraria::espaco_esta_livre)
+        .def("calcular_total_penalidades", &GradeHoraria::calcular_total_penalidades);
 }

@@ -15,12 +15,21 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(pybind11)
 
 # Define quais arquivos C++ serão compilados
-file(GLOB SOURCES "src/*.cpp")
+#file(GLOB SOURCES "src/*.cpp")
+set(SOURCES
+    src/bindings.cpp
+    src/dados/Parser.cpp
+    src/solucao/GradeHoraria.cpp
+)
 
 # Cria o módulo nativo para o Python usando o pybind11
 pybind11_add_module(core_otimizador ${SOURCES})
 
 # Informa onde estão os arquivos de cabeçalho (.hpp)
-target_include_directories(core_otimizador PRIVATE src)
+target_include_directories(core_otimizador PRIVATE 
+  src
+  src/dados
+  src/solucao
+)
 # Força o compilador a salvar o arquivo .pyd diretamente na raiz do projeto
 set_target_properties(core_otimizador PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}")
