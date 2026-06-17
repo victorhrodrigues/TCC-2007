@@ -1,7 +1,11 @@
 import core_otimizador
 import os
 
-caminho_instancia = os.path.join("dados", "EarlyDatasets", "comp01.ctt.txt")
+pasta = "dados"
+dataset = "EarlyDatasets"
+instancia = "comp01.ctt.txt"
+
+caminho_instancia = os.path.join(pasta, dataset, instancia)
 
 instancia = core_otimizador.Instancia()
 
