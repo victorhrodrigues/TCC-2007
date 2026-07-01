@@ -238,3 +238,20 @@ bool GradeHoraria::validar_alocacao_completa() const {
 
     return true; // Todas as disciplinas possuem o número exato de aulas alocadas!
 }
+
+// Retorna true se atende H1, H2, H3 e H4. Como H2, H3 e H4 são blindados na alocação,
+// o estado de viabilidade resume-se a verificar se H1 (alocação completa) foi atendido.
+bool GradeHoraria::esta_viavel() const {
+    return validar_alocacao_completa();
+}
+
+// Identifica qual das restrições suaves está gerando a pior penalidade isolada
+std::string GradeHoraria::obter_pior_gargalo() const {
+    // Para simplificar a análise inicial da IA, vamos segmentar as penalidades
+    // (Em um cenário real, você pode quebrar o cálculo de calcular_total_penalidades() por blocos)
+    int total = calcular_total_penalidades();
+    if (total == 0) return "NENHUM";
+    
+    // Se houver penalidade, por enquanto apontaremos para a genérica ou para a pior conhecida
+    return "S1_S4"; 
+}

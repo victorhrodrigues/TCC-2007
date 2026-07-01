@@ -27,7 +27,9 @@ PYBIND11_MODULE(core_otimizador, m) {
         .def_readonly("qtd_dias", &Instancia::qtd_dias)
         .def_readonly("periodos_por_dia", &Instancia::periodos_por_dia)
         .def_readonly("disciplinas", &Instancia::disciplinas)
-        .def_readonly("salas", &Instancia::salas);
+        .def_readonly("salas", &Instancia::salas)
+        .def_readonly("qtd_salas", &Instancia::qtd_salas)
+        .def_readonly("qtd_disciplinas", &Instancia::qtd_disciplinas);
 
     // Parser
     py::class_<Parser>(m, "Parser")
@@ -41,5 +43,7 @@ PYBIND11_MODULE(core_otimizador, m) {
         .def("espaco_esta_livre", &GradeHoraria::espaco_esta_livre)
         .def("calcular_total_penalidades", &GradeHoraria::calcular_total_penalidades)
         .def("validar_movimento_viavel", &GradeHoraria::validar_movimento_viavel)
-        .def("validar_alocacao_completa", &GradeHoraria::validar_alocacao_completa);
+        .def("validar_alocacao_completa", &GradeHoraria::validar_alocacao_completa)
+        .def("esta_viavel", &GradeHoraria::esta_viavel)
+        .def("obter_pior_gargalo", &GradeHoraria::obter_pior_gargalo);
 }

@@ -37,6 +37,10 @@ public:
 
     bool validar_alocacao_completa() const;
 
+    bool esta_viavel() const;
+
+    std::string obter_pior_gargalo() const;
+
 };
 
 #endif
