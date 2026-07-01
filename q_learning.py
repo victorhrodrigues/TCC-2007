@@ -3,14 +3,14 @@ import os
 
 pasta = "dados"
 dataset = "EarlyDatasets"
-instancia = "comp01.ctt.txt"
+nome_arquivo = "comp01.ctt.txt"
 
-caminho_instancia = os.path.join(pasta, dataset, instancia)
+caminho_instancia = os.path.join(pasta, dataset, nome_arquivo)
 
 instancia = core_otimizador.Instancia()
 
 print("=" * 60)
-print(f"ROTEIRO DE VERIFICAÇÃO AUTOMATIZADA: {instancia}")
+print(f"ROTEIRO DE VERIFICAÇÃO AUTOMATIZADA: {nome_arquivo}")
 print("=" * 60)
 print(f"Tentando carregar arquivo: {caminho_instancia}")
 
@@ -52,20 +52,26 @@ if core_otimizador.Parser.carregar_ctt(caminho_instancia, instancia):
     print(f" -> Alocar Disciplina 1 (Mesmo currículo) no mesmo período: {colisao_turma} (Esperado: False)")
 
     # -----------------------------------------------------------------
-    # TESTE 4: AVALIAÇÃO DE PENALIDADES SUAVES (S1 - CAPACIDADE DA SALA)
+    # TESTE 4: AVALIAÇÃO DE PENALIDADES SUAVES (S1, S2, S3, S4)
     # -----------------------------------------------------------------
-    print("\nTESTE 4: Verificando Cálculo da Função de Custo / Fitness (S1)...")
-    # Disciplina 0 possui 130 alunos. Sala 0 (Sala B) tem capacidade para 200.
-    print(f" -> Penalidade com Disciplina 0 na Sala Grande: {grade.calcular_total_penalidades()} (Esperado: 0)")
+    print("\nTESTE 4: Verificando Motor de Avaliação Estética / Custos (S1 a S4)...")
     
-    # Vamos remover a aula da sala grande...
-    grade.remover_aula(0, 0, 0)
+    # Vamos limpar qualquer inserção anterior criando uma nova instância limpa de testes
+    grade_teste = core_otimizador.GradeHoraria(instancia)
     
-    # ...e alocar a Disciplina 0 na Sala 2 (Sala E), que só tem capacidade para 9 assentos!
-    # O C++ deve aceitar (pois as restrições rígidas passam), mas aplicar uma multa pesada de soft constraint.
-    grade.alocar_aula(0, 0, 2, 0)
-    # Multa esperada: 130 alunos - 9 assentos = 121 pontos de penalidade
-    print(f" -> Penalidade após mover Disciplina 0 para Sala Pequena (Capacidade: 9): {grade.calcular_total_penalidades()} (Esperado: 121)")
+    # Disciplina 0 precisa de 4 aulas distribuídas em no mínimo 4 dias diferentes (comp01)
+    # Alocando duas aulas da Disciplina 0 no MESMO DIA (Dia 0), mas em períodos diferentes:
+    grade_teste.alocar_aula(0, 0, 0, 0) # Sala Grande
+    grade_teste.alocar_aula(0, 2, 1, 0) # Sala Média (C)
+
+    custo_suave = grade_teste.calcular_total_penalidades()
+    print(f" -> Penalidades acumuladas com a configuração atual: {custo_suave}")
+    print("    Análise esperada do Custo:")
+    print("     * S1 (Capacidade): 0 - Ambas as salas suportam os alunos.")
+    print("     * S2 (Estabilidade de Sala): +1 - Usou duas salas diferentes (Sala 0 e Sala 1).")
+    print("     * S3 (Mínimo de Dias Úteis): +3 - Precisava de 4 dias, mas as duas aulas estão no mesmo dia (4 - 1 = 3).")
+    print("     * S4 (Compactação Currículo): +1 - Janela vazia criada no Período 1 entre as duas aulas da turma.")
+    print(f"    Total calculado pelo C++: {custo_suave} (Esperado: 5)")
 
     # -----------------------------------------------------------------
     # TESTE 5: ESCUDO DE MEMÓRIA (ÍNDICES INVÁLIDOS)
@@ -75,10 +81,24 @@ if core_otimizador.Parser.carregar_ctt(caminho_instancia, instancia):
     limite_invalido = grade.validar_movimento_viavel(99, 0, 0, 0)
     print(f" -> Validação de índice inexistente (Ex: Dia 99): {limite_invalido} (Esperado: False)")
 
+    # -----------------------------------------------------------------
+    # TESTE 6: RESTRIÇÃO RÍGIDA H4 - INDISPONIBILIDADE DE PROFESSOR
+    # -----------------------------------------------------------------
+    print("\nTESTE 6: Validando Restrição Rígida H4 (Indisponibilidade)...")
+    # Baseado no arquivo real: c0001 (Disciplina 0) é indisponível no Dia 4, Período 0
+    tentativa_indisponivel = grade.alocar_aula(4, 0, 0, 0) # <- Ajustado para as coordenadas do arquivo
+    print(f" -> Alocar Disciplina 0 em horário de indisponibilidade: {tentativa_indisponivel} (Esperado: False)")
+
+    # -----------------------------------------------------------------
+    # TESTE 7: RESTRIÇÃO RÍGIDA H1 - ALOCAÇÃO COMPLETA DE AULAS
+    # -----------------------------------------------------------------
+    print("\nTESTE 7: Validando Restrição Rígida H1 (Alocação Completa)...")
+    grade_completa = grade.validar_alocacao_completa()
+    print(f" -> A grade possui todas as aulas exigidas alocadas? {grade_completa} (Esperado: False - pois a grade está quase vazia)")
+
     print("\n" + "=" * 60)
     print("FIM DO ROTEIRO: AMBIENTE INTEGRADO E FUNCIONANDO SEM ERROS!")
     print("=" * 60)
-
 else:
     print("\n [ERRO] Falha crítica ao abrir o arquivo.")
     print("Verifique se a árvore de diretórios contém a pasta dados/EarlyDatasets/")

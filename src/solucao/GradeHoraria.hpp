@@ -35,6 +35,8 @@ public:
 
     int calcular_total_penalidades() const;
 
+    bool validar_alocacao_completa() const;
+
 };
 
 #endif

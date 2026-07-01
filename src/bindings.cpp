@@ -40,5 +40,6 @@ PYBIND11_MODULE(core_otimizador, m) {
         .def("obter_disciplina_na_gaveta", &GradeHoraria::obter_disciplina_na_gaveta)
         .def("espaco_esta_livre", &GradeHoraria::espaco_esta_livre)
         .def("calcular_total_penalidades", &GradeHoraria::calcular_total_penalidades)
-        .def("validar_movimento_viavel", &GradeHoraria::validar_movimento_viavel);
+        .def("validar_movimento_viavel", &GradeHoraria::validar_movimento_viavel)
+        .def("validar_alocacao_completa", &GradeHoraria::validar_alocacao_completa);
 }
