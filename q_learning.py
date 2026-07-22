@@ -170,21 +170,75 @@ def aplicar_heuristica_baixo_nivel(acao, grade, instancia, aulas_pendentes, agen
         if movimento in agente.lista_tabu: return False 
 
         custo_antes = grade.calcular_total_penalidades()
-        grade.remover_aula(d1, p1, s1); grade.remover_aula(d2, p2, s2)
         
-        if grade.alocar_aula(d1, p1, s1, disc2) and grade.alocar_aula(d2, p2, s2, disc1):
+        # Remove as duas antes de testar
+        grade.remover_aula(d1, p1, s1)
+        grade.remover_aula(d2, p2, s2)
+        
+        # Tenta alocar isoladamente (executa ambas e guarda o resultado booleano do C++)
+        alocou_disc2 = grade.alocar_aula(d1, p1, s1, disc2)
+        alocou_disc1 = grade.alocar_aula(d2, p2, s2, disc1)
+        
+        if alocou_disc2 and alocou_disc1:
             if grade.calcular_total_penalidades() < custo_antes:
-                agente.lista_tabu.append(movimento); return True
+                agente.lista_tabu.append(movimento)
+                return True
                 
-        grade.remover_aula(d1, p1, s1); grade.remover_aula(d2, p2, s2)
+        # Rollback seguro: Só remove o que realmente o C++ conseguiu alocar
+        if alocou_disc2: grade.remover_aula(d1, p1, s1)
+        if alocou_disc1: grade.remover_aula(d2, p2, s2)
+        
+        # Devolve para as posições originais
         if disc1 != -1: grade.alocar_aula(d1, p1, s1, disc1)
         if disc2 != -1: grade.alocar_aula(d2, p2, s2, disc2)
+        return False
+    elif acao == 4: 
+        # [A4] TARGETED SOFT-FIX (Inspirado em Lü e Hao)
+        # Foca em corrigir Estabilidade de Sala (S2) e Compactação do Currículo (S4)
+        if aulas_pendentes: return False 
+        
+        # 1. Seleciona uma aula aleatória da grade
+        d, p, s = random.randint(0, instancia.qtd_dias - 1), random.randint(0, instancia.periodos_por_dia - 1), random.randint(0, instancia.qtd_salas - 1)
+        disc_alvo = grade.obter_disciplina_na_gaveta(d, p, s)
+        if disc_alvo == -1: return False
+        
+        custo_atual_base = grade.calcular_total_penalidades()
+        grade.remover_aula(d, p, s)
+        
+        melhor_custo = float('inf')
+        melhor_destino = None
+        
+        # 2. Vizinhança Cirúrgica: Testa posições APENAS no mesmo dia ou na mesma sala
+        alvos_estrategicos = []
+        for _ in range(5):
+            # Tenta agrupar no MESMO DIA (outro período, sala aleatória) - Foco em S4 (Compactação)
+            alvos_estrategicos.append((d, random.randint(0, instancia.periodos_por_dia - 1), random.randint(0, instancia.qtd_salas - 1)))
+            
+            # Tenta agrupar na MESMA SALA (outro dia, período aleatório) - Foco em S2 (Estabilidade)
+            alvos_estrategicos.append((random.randint(0, instancia.qtd_dias - 1), random.randint(0, instancia.periodos_por_dia - 1), s))
+            
+        # 3. Avalia os alvos estratégicos
+        for d_t, p_t, s_t in alvos_estrategicos:
+            if grade.espaco_esta_livre(d_t, p_t, s_t) and grade.alocar_aula(d_t, p_t, s_t, disc_alvo):
+                custo_teste = grade.calcular_total_penalidades()
+                if custo_teste < melhor_custo:
+                    melhor_custo = custo_teste
+                    melhor_destino = (d_t, p_t, s_t)
+                grade.remover_aula(d_t, p_t, s_t)
+                
+        # 4. Só aceita se a jogada cirúrgica reduziu o custo
+        if melhor_destino and melhor_custo < custo_atual_base:
+            grade.alocar_aula(*melhor_destino, disc_alvo)
+            return True
+            
+        # 5. Rollback: desfaz se a vizinhança cirúrgica não foi útil
+        grade.alocar_aula(d, p, s, disc_alvo)
         return False
 
 # CONTEXTO DE EXECUÇÃO E LOOP DE TREINO (TESTE)
 pasta = "dados"
 dataset = "EarlyDatasets"
-nome_arquivo = "comp01.ctt.txt"
+nome_arquivo = "comp07.ctt.txt"
 caminho_instancia = os.path.join(pasta, dataset, nome_arquivo)
 
 instancia = core_otimizador.Instancia()
@@ -195,7 +249,7 @@ if core_otimizador.Parser.carregar_ctt(caminho_instancia, instancia):
     print("=" * 60)
     
     grade = core_otimizador.GradeHoraria(instancia)
-    agente = AgenteQLearning(num_acoes=4, epsilon_decay=0.998)
+    agente = AgenteQLearning(num_acoes=5, epsilon_decay=0.998)
     
     # 1. GERAÇÃO INICIAL
     aulas_pendentes = gerar_solucao_inicial_gulosa(grade, instancia)
