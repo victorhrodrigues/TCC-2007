@@ -2,6 +2,7 @@ import core_otimizador
 import os
 import random
 import collections
+import copy
 
 
 # A ESTRUTURA DO AGENTE DE Q-LEARNING
@@ -238,7 +239,7 @@ def aplicar_heuristica_baixo_nivel(acao, grade, instancia, aulas_pendentes, agen
 # CONTEXTO DE EXECUÇÃO E LOOP DE TREINO (TESTE)
 pasta = "dados"
 dataset = "EarlyDatasets"
-nome_arquivo = "comp07.ctt.txt"
+nome_arquivo = "comp01.ctt.txt"
 caminho_instancia = os.path.join(pasta, dataset, nome_arquivo)
 
 instancia = core_otimizador.Instancia()
@@ -254,9 +255,16 @@ if core_otimizador.Parser.carregar_ctt(caminho_instancia, instancia):
     # 1. GERAÇÃO INICIAL
     aulas_pendentes = gerar_solucao_inicial_gulosa(grade, instancia)
     qtd_pendentes_anterior = len(aulas_pendentes)
-    custo_anterior = grade.calcular_total_penalidades() # <--- Captura o custo inicial da grade
+    custo_anterior = grade.calcular_total_penalidades()
     total_exigido = sum(d.num_aulas for d in instancia.disciplinas)
     print(f"Total de aulas exigidas pelo arquivo: {total_exigido}")
+
+    # --- OTIMIZAÇÃO E ELITISMO ---
+    # Tamanho dinâmico da Lista Tabu baseado no tamanho da instância
+    agente.lista_tabu = collections.deque(maxlen=max(20, int(total_exigido * 0.1)))
+    
+    melhor_custo_historico = float('inf')
+    melhor_grade_historica = None 
 
     for iteracao in range(1, 10001): 
         estado_atual = agente.obter_estado(grade)
@@ -265,44 +273,59 @@ if core_otimizador.Parser.carregar_ctt(caminho_instancia, instancia):
         # 2. APLICA A AÇÃO
         alterou = aplicar_heuristica_baixo_nivel(acao, grade, instancia, aulas_pendentes, agente)
 
-        # 3. ATUALIZA AS MÉTRICAS PARA O ÁRBITRO E PARA O PRINT
+        # 3. ATUALIZA AS MÉTRICAS
         qtd_pendentes_novo = len(aulas_pendentes)
-        custo_novo = grade.calcular_total_penalidades() # <--- Agora o custo é calculado todo turno!
+        custo_novo = grade.calcular_total_penalidades() 
         estado_novo = agente.obter_estado(grade)
         
-        # 4. ÁRBITRO HÍBRIDO (Avalia viabilidade primeiro, estética depois)
+        # --- ELITISMO: Salva a matriz se quebrarmos o recorde ---
+        if qtd_pendentes_novo == 0 and custo_novo < melhor_custo_historico:
+            melhor_custo_historico = custo_novo
+            try:
+                melhor_grade_historica = copy.deepcopy(grade)
+            except TypeError:
+                pass # Ignora silenciosamente se o pybind11 bloquear o deepcopy sem método customizado
+
+        # 4. ÁRBITRO HÍBRIDO E CONTROLE DE ESTAGNAÇÃO
         if alterou:
             if estado_atual[0] == 0: # Fase 1 (Grade Inválida)
                 if qtd_pendentes_novo < qtd_pendentes_anterior:
                     recompensa = 10.0  
+                    agente.iteracoes_sem_melhora = 0 # Zerou a estagnação
                 elif qtd_pendentes_novo > qtd_pendentes_anterior:
                     recompensa = -5.0  
+                    agente.iteracoes_sem_melhora += 1
                 else:
                     recompensa = 0.0   
+                    agente.iteracoes_sem_melhora += 1
             else: # Fase 2 (Grade Válida)
                 if custo_novo < custo_anterior:
-                    recompensa = 1.0   # BÔNUS: A IA reduziu o custo suave!
+                    recompensa = 1.0   
+                    agente.iteracoes_sem_melhora = 0 # Zerou a estagnação
                 elif custo_novo > custo_anterior:
                     recompensa = -1.0  
+                    agente.iteracoes_sem_melhora += 1
                 else:
-                    recompensa = -0.1  # Punição leve por estagnar
+                    recompensa = -0.1  
+                    agente.iteracoes_sem_melhora += 1
         else:
             recompensa = -1.0      
+            agente.iteracoes_sem_melhora += 1
             
         # 5. APRENDIZADO
         agente.atualizar_politica(estado_atual, acao, recompensa, estado_novo)
         agente.decair_epsilon()
         
-        # Salva o estado atual para comparar na próxima iteração
         qtd_pendentes_anterior = qtd_pendentes_novo
         custo_anterior = custo_novo 
-        
-        # TERMINAL DE ACOMPANHAMENTO (Mantido exatamente como o seu)
+    
+        # TERMINAL DE ACOMPANHAMENTO 
         if iteracao % 20 == 0:
             status = "VÁLIDA" if len(aulas_pendentes) == 0 else "INVÁLIDA"
-            print(f"Iter {iteracao:04d} | Eps: {agente.epsilon:.3f} | Pendentes: {len(aulas_pendentes)} | Status: {status} | Custo: {custo_novo}")
+            print(f"Iter {iteracao:04d} | Eps: {agente.epsilon:.3f} | Pend: {len(aulas_pendentes)} | Status: {status} | Custo Atual: {custo_novo} | Recorde: {melhor_custo_historico}")
             
     print("\n" + "=" * 60)
+    print(f"TREINAMENTO ENCERRADO. O melhor custo viável encontrado foi: {melhor_custo_historico}")
     print("Tamanho da Q-Table gerada:", len(agente.q_table))
     print("Mapeamento de Estados Aprendidos:")
     for estado, acoes in agente.q_table.items():
