@@ -17,3 +17,9 @@ __pycache__/
 dados/EarlyDatasets/
 dados/LateDatasets/
 dados/HiddenDatasets/
+
+# Arquivos marckdown
+*.md
+
+# Arquivos de contexto
+*.pdf

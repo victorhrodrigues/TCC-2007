@@ -66,12 +66,13 @@ if core_otimizador.Parser.carregar_ctt(caminho_instancia, instancia):
 
     custo_suave = grade_teste.calcular_total_penalidades()
     print(f" -> Penalidades acumuladas com a configuração atual: {custo_suave}")
-    print("    Análise esperada do Custo:")
-    print("     * S1 (Capacidade): 0 - Ambas as salas suportam os alunos.")
-    print("     * S2 (Estabilidade de Sala): +1 - Usou duas salas diferentes (Sala 0 e Sala 1).")
-    print("     * S3 (Mínimo de Dias Úteis): +3 - Precisava de 4 dias, mas as duas aulas estão no mesmo dia (4 - 1 = 3).")
-    print("     * S4 (Compactação Currículo): +1 - Janela vazia criada no Período 1 entre as duas aulas da turma.")
-    print(f"    Total calculado pelo C++: {custo_suave} (Esperado: 5)")
+    print("    Análise esperada do Custo (pesos oficiais ITC-2007):")
+    print("     * S1 (Capacidade): +30 - Sala C (capacidade 100) é pequena demais para os 130 alunos de c0001 (130 - 100 = 30).")
+    print("     * S2 (Estabilidade de Sala): +1 - Usou duas salas diferentes (Sala 0 e Sala 1), peso 1.")
+    print("     * S3 (Mínimo de Dias Úteis): +15 - Precisava de 4 dias, só usou 1 (4 - 1 = 3), peso 5 (3 x 5 = 15).")
+    print("     * S4 (Compactação Currículo): +8 - c0001 pertence a 2 currículos (q000 e q002); em cada um, as")
+    print("       aulas dos períodos 0 e 2 ficam isoladas (sem vizinho no período 1), peso 2 (2 aulas x 2 currículos x 2 = 8).")
+    print(f"    Total calculado pelo C++: {custo_suave} (Esperado: 54)")
 
     # -----------------------------------------------------------------
     # TESTE 5: ESCUDO DE MEMÓRIA (ÍNDICES INVÁLIDOS)

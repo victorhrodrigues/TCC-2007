@@ -177,34 +177,23 @@ int GradeHoraria::calcular_total_penalidades() const {
             if (dias_usados_por_disc[i][d]) qtd_dias_distintos++;
         }
         if (qtd_dias_distintos > 0 && qtd_dias_distintos < inst.disciplinas[i].dias_minimos) {
-            penalty += (inst.disciplinas[i].dias_minimos - qtd_dias_distintos);
+            penalty += 5 * (inst.disciplinas[i].dias_minimos - qtd_dias_distintos); // correção do peso para 5 
         }
     }
 
     // CÁLCULO DE PENALIDADES DE S4 (COMPACTAÇÃO DO CURRÍCULO)
+    // Correção de estrutura de avaliação de restrição S4 inválida
     for (int c = 0; c < inst.qtd_curriculos; ++c) {
         for (int d = 0; d < inst.qtd_dias; ++d) {
-            int primeira_aula = -1;
-            int ultima_aula = -1;
-            int total_aulas_no_dia = 0;
-
             for (int p = 0; p < inst.periodos_por_dia; ++p) {
-                if (grade_curriculo_ocupada[d][p][c]) {
-                    if (primeira_aula == -1) primeira_aula = p;
-                    ultima_aula = p;
-                    total_aulas_no_dia++;
-                }
-            }
+                if (!grade_curriculo_ocupada[d][p][c]) continue;
 
-            if (total_aulas_no_dia > 0) {
-                if (total_aulas_no_dia == 1) {
-                    penalty += 1;
-                } else {
-                    for (int p = primeira_aula; p <= ultima_aula; ++p) {
-                        if (!grade_curriculo_ocupada[d][p][c]) {
-                            penalty += 1; 
-                        }
-                    }
+                bool vizinho_antes = (p > 0) && grade_curriculo_ocupada[d][p - 1][c];
+                bool vizinho_depois = (p < inst.periodos_por_dia - 1) && grade_curriculo_ocupada[d][p + 1][c];
+
+                // Aula isolada: nenhuma aula do mesmo currículo no período imediatamente antes ou depois
+                if (!vizinho_antes && !vizinho_depois) {
+                    penalty += 2;
                 }
             }
         }
