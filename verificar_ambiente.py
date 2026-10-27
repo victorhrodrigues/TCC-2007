@@ -51,6 +51,11 @@ if core_otimizador.Parser.carregar_ctt(caminho_instancia, instancia):
     colisao_turma = grade.alocar_aula(0, 0, 1, 1)
     print(f" -> Alocar Disciplina 1 (Mesmo currículo) no mesmo período: {colisao_turma} (Esperado: False)")
 
+    # c0001 pertence a dois currículos (q000 e q002). A Disciplina 8 (c0024, professor t008) só está em q002,
+    # então o conflito tem de ser detectado também pelo segundo currículo de c0001, não só pelo primeiro.
+    colisao_segundo_curriculo = grade.alocar_aula(0, 0, 1, 8)
+    print(f" -> Alocar Disciplina 8 (compartilha só o 2º currículo de c0001) no mesmo período: {colisao_segundo_curriculo} (Esperado: False)")
+
     # -----------------------------------------------------------------
     # TESTE 4: AVALIAÇÃO DE PENALIDADES SUAVES (S1, S2, S3, S4)
     # -----------------------------------------------------------------

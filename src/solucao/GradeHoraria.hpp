@@ -18,7 +18,8 @@ private:
     // condição H3 - verificação se a turma já tiver aula no horário
     std::vector<std::vector<std::vector<bool>>> matriz_curriculo_ocupado;
 
-    int obter_index_curriculo_da_disciplina(int disciplina_idx) const;
+    // Índices de TODOS os currículos de cada disciplina (relação N:N), calculados uma vez no construtor
+    std::vector<std::vector<int>> curriculos_da_disciplina;
 
 public: 
     GradeHoraria(const Instancia& instancia);

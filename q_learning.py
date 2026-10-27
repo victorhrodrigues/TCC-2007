@@ -239,7 +239,7 @@ def aplicar_heuristica_baixo_nivel(acao, grade, instancia, aulas_pendentes, agen
 # CONTEXTO DE EXECUÇÃO E LOOP DE TREINO (TESTE)
 pasta = "dados"
 dataset = "EarlyDatasets"
-nome_arquivo = "comp05.ctt.txt"
+nome_arquivo = "comp01.ctt.txt"
 caminho_instancia = os.path.join(pasta, dataset, nome_arquivo)
 
 instancia = core_otimizador.Instancia()

@@ -20,19 +20,19 @@ GradeHoraria::GradeHoraria(const Instancia& instancia) : inst(instancia) {
             std::vector<bool>(inst.qtd_curriculos, false)
         )
     );
-}
 
-/*
-    Função para verificação a qual currículo uma disciplina pertence
-*/
-int GradeHoraria::obter_index_curriculo_da_disciplina(int disciplina_indice) const {
-    std::string id_busca = inst.disciplinas[disciplina_indice].id;
-    for (int i = 0; i < inst.qtd_curriculos; ++i) {
-        for (const auto& id_disc : inst.curriculos[i].ids_disciplinas) {
-            if (id_disc == id_busca) return i;
+    // Mapeia cada disciplina para todos os currículos que a incluem (uma disciplina pode estar em vários)
+    curriculos_da_disciplina.resize(inst.qtd_disciplinas);
+    for (int q = 0; q < inst.qtd_curriculos; ++q) {
+        for (const auto& id_disc : inst.curriculos[q].ids_disciplinas) {
+            for (int c = 0; c < inst.qtd_disciplinas; ++c) {
+                if (inst.disciplinas[c].id == id_disc) {
+                    curriculos_da_disciplina[c].push_back(q);
+                    break;
+                }
+            }
         }
     }
-    return -1; // Não achou currículo 
 }
 
 bool GradeHoraria::validar_movimento_viavel(int dia, int periodo, int sala_indice, int disciplina_indice) const {
@@ -62,10 +62,11 @@ bool GradeHoraria::validar_movimento_viavel(int dia, int periodo, int sala_indic
         }
     }
 
-    // H3 (Currículo): Alunos dessa turma/curriculo já estão em outra aula nesse horário
-    int curr_indice = obter_index_curriculo_da_disciplina(disciplina_indice);
-    if (curr_indice != -1 && matriz_curriculo_ocupado[dia][periodo][curr_indice]) {
-        return false; // Conflito de Currículo detectado
+    // H3 (Currículo): Alunos de qualquer currículo dessa disciplina já estão em outra aula nesse horário
+    for (int curr_indice : curriculos_da_disciplina[disciplina_indice]) {
+        if (matriz_curriculo_ocupado[dia][periodo][curr_indice]) {
+            return false; // Conflito de Currículo detectado
+        }
     }
 
     return true; // Movimento viável
@@ -79,8 +80,7 @@ bool GradeHoraria::alocar_aula(int dia, int periodo, int sala_indice, int discip
 
     matriz[dia][periodo][sala_indice] = disciplina_indice;
 
-    int curr_indice = obter_index_curriculo_da_disciplina(disciplina_indice);
-    if (curr_indice != -1) {
+    for (int curr_indice : curriculos_da_disciplina[disciplina_indice]) {
         matriz_curriculo_ocupado[dia][periodo][curr_indice] = true;
     }
 
@@ -96,8 +96,7 @@ void GradeHoraria::remover_aula(int dia, int periodo, int sala_indice) {
     int disciplina_indice = matriz[dia][periodo][sala_indice];
 
     if (disciplina_indice != -1) {
-        int curr_indice = obter_index_curriculo_da_disciplina(disciplina_indice);
-        if (curr_indice != -1) {
+        for (int curr_indice : curriculos_da_disciplina[disciplina_indice]) {
             matriz_curriculo_ocupado[dia][periodo][curr_indice] = false;
         }
 
@@ -144,15 +143,8 @@ int GradeHoraria::calcular_total_penalidades() const {
                     dias_usados_por_disc[disc_idx][d] = true;
 
                     // --- MAPEAMENTO MULTICURRÍCULO PARA S4 ---
-                    // Varre todos os currículos para ver quais incluem o ID desta disciplina
-                    std::string id_busca = inst.disciplinas[disc_idx].id;
-                    for (int c = 0; c < inst.qtd_curriculos; ++c) {
-                        for (const auto& id_disc : inst.curriculos[c].ids_disciplinas) {
-                            if (id_disc == id_busca) {
-                                grade_curriculo_ocupada[d][p][c] = true;
-                                break; // Já achou neste currículo, pula para o próximo c
-                            }
-                        }
+                    for (int c : curriculos_da_disciplina[disc_idx]) {
+                        grade_curriculo_ocupada[d][p][c] = true;
                     }
                 }
             }
