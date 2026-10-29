@@ -10,7 +10,8 @@ import json
 
 # AÇÕES QUE PODEM AGIR EM CADA FASE (máscara de ações), indexadas por viavel
 ACOES_POR_FASE = {
-    0: [2],           # Fase 1 (grade incompleta): só o Ruin-and-Recreate age com aulas pendentes
+    0: [5],           # Fase 1 (grade incompleta): reparo por conflitos (Müller). O R&R (A2) sai da máscara
+                      # e será substituído pela reconstrução de Geiger na etapa 4
     1: [0, 1, 3, 4],  # Fase 2 (grade completa): ações de otimização do custo
 }
 
@@ -30,6 +31,7 @@ class AgenteQLearning:
         self.iteracoes_sem_melhora = 0
 
         self.lista_tabu = collections.deque(maxlen=20)
+        self.cbs = collections.Counter()  # Conflict-based Statistics (Müller): vezes que cada colocação desalocou cada aula
 
     def obter_estado(self, grade):
         """ Extrai a representação discreta (S) do ambiente C++ """
@@ -248,6 +250,42 @@ def aplicar_heuristica_baixo_nivel(acao, grade, instancia, aulas_pendentes, agen
         grade.alocar_aula(d, p, s, disc_alvo)
         return False
 
+    elif acao == 5:
+        # [A5] REPARO POR CONFLITOS (IFS + CBS, inspirado em Müller §3.1)
+        if not aulas_pendentes: return False
+
+        # 1. Variável: uma das aulas pendentes mais difíceis (menor domínio / nº de disciplinas em conflito)
+        menor = min(agente.dificuldade[c] for c in aulas_pendentes)
+        disc_alvo = random.choice([c for c in aulas_pendentes if agente.dificuldade[c] == menor])
+
+        # 2. Valor: posição permitida (H4) com menos aulas a desalocar, cada conflito pesado pelo histórico (CBS)
+        melhor_peso, melhores = float('inf'), []
+        for d, p, s, conflitos in grade.conflitos_por_posicao(disc_alvo):
+            peso = sum(1 + agente.cbs[(disc_alvo, d, p, s, b, s_b)] for b, s_b in conflitos)
+            if peso < melhor_peso:
+                melhor_peso, melhores = peso, [(d, p, s, conflitos)]
+            elif peso == melhor_peso:
+                melhores.append((d, p, s, conflitos))
+        if not melhores: return False
+        d, p, s, conflitos = random.choice(melhores)
+
+        # 3. Desaloca todas as aulas em conflito (voltam para a fila) e coloca a aula escolhida
+        for b, s_b in conflitos:
+            grade.remover_aula(d, p, s_b)
+            aulas_pendentes.append(b)
+        aulas_pendentes.remove(disc_alvo)
+        if grade.alocar_aula(d, p, s, disc_alvo):
+            for b, s_b in conflitos:
+                agente.cbs[(disc_alvo, d, p, s, b, s_b)] += 1  # registra quem foi desalocado por essa colocação
+            return True
+
+        # Proteção: se o C++ recusar (não deveria, os conflitos já saíram), desfaz tudo
+        aulas_pendentes.append(disc_alvo)
+        for b, s_b in conflitos:
+            grade.alocar_aula(d, p, s_b, b)
+            aulas_pendentes.remove(b)
+        return False
+
 # PARÂMETROS DA EXECUÇÃO (linha de comando)
 def ler_argumentos():
     parser = argparse.ArgumentParser(description="Hiper-heurística com Q-Learning para o CB-CTT (ITC-2007)")
@@ -315,7 +353,10 @@ def main():
     print("=" * 60)
 
     grade = core_otimizador.GradeHoraria(instancia)
-    agente = AgenteQLearning(num_acoes=5)
+    agente = AgenteQLearning(num_acoes=6)
+
+    # Dificuldade de cada disciplina para a IFS: domínio pequeno e muitos conflitos = difícil (estática, calculada uma vez)
+    agente.dificuldade = [grade.tamanho_dominio(c) / max(1, grade.grau_conflitos(c)) for c in range(instancia.qtd_disciplinas)]
 
     # 1. GERAÇÃO INICIAL
     aulas_pendentes = gerar_solucao_inicial_gulosa(grade, instancia)

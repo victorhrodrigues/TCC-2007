@@ -48,5 +48,8 @@ PYBIND11_MODULE(core_otimizador, m) {
         .def("validar_movimento_viavel", &GradeHoraria::validar_movimento_viavel)
         .def("validar_alocacao_completa", &GradeHoraria::validar_alocacao_completa)
         .def("esta_viavel", &GradeHoraria::esta_viavel)
-        .def("obter_pior_gargalo", &GradeHoraria::obter_pior_gargalo);
+        .def("obter_pior_gargalo", &GradeHoraria::obter_pior_gargalo)
+        .def("conflitos_por_posicao", &GradeHoraria::conflitos_por_posicao)
+        .def("tamanho_dominio", &GradeHoraria::tamanho_dominio)
+        .def("grau_conflitos", &GradeHoraria::grau_conflitos);
 }

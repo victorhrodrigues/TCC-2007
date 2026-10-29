@@ -114,6 +114,19 @@ if core_otimizador.Parser.carregar_ctt(caminho_instancia, instancia):
     print(f" -> Alocar Disciplina 1 no período 0 da original: {grade_teste.alocar_aula(0, 0, 1, 1)} (Esperado: True)")
     print(f" -> Alocar Disciplina 1 no período 0 da cópia: {copia.alocar_aula(0, 0, 1, 1)} (Esperado: False)")
 
+    # -----------------------------------------------------------------
+    # TESTE 9: CONFLITOS POR POSIÇÃO (REPARO DA FASE 1, INSPIRADO EM MÜLLER)
+    # -----------------------------------------------------------------
+    print("\nTESTE 9: Validando a lista de conflitos usada pelo reparo da Fase 1...")
+    print(f" -> Domínio da Disciplina 8 (c0024): {grade.tamanho_dominio(8)} (Esperado: 144 - 24 períodos livres x 6 salas)")
+    print(f" -> Disciplinas em conflito com a Disciplina 0 (c0001): {grade.grau_conflitos(0)} (Esperado: 6)")
+    print(f" -> Disciplinas em conflito com a Disciplina 8 (c0024): {grade.grau_conflitos(8)} (Esperado: 4)")
+    posicoes = {(d, p, s): conflitos for d, p, s, conflitos in grade.conflitos_por_posicao(8)}
+    # Na grade do Teste 1, só a c0001 está alocada, em (dia 0, período 0, sala 0); ela divide o currículo q002 com a c0024
+    print(f" -> Conflitos da c0024 em (0, 0, 1): {posicoes[(0, 0, 1)]} (Esperado: [(0, 0)] - c0001 na sala 0)")
+    print(f" -> Conflitos da c0024 em (1, 0, 0): {posicoes[(1, 0, 0)]} (Esperado: [] - posição livre e sem conflito)")
+    print(f" -> Posições da c0024 no dia 3 (indisponível): {sum(1 for (d, p, s) in posicoes if d == 3)} (Esperado: 0)")
+
     print("\n" + "=" * 60)
     print("FIM DO ROTEIRO: AMBIENTE INTEGRADO E FUNCIONANDO SEM ERROS!")
     print("=" * 60)

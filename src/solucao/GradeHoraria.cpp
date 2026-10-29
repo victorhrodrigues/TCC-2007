@@ -33,6 +33,31 @@ GradeHoraria::GradeHoraria(const Instancia& instancia) : inst(instancia) {
             }
         }
     }
+
+    // Duas disciplinas conflitam (H3) se têm o mesmo professor ou algum currículo em comum
+    disciplinas_em_conflito.assign(inst.qtd_disciplinas * inst.qtd_disciplinas, false);
+    for (int c = 0; c < inst.qtd_disciplinas; ++c) {
+        for (int o = 0; o < inst.qtd_disciplinas; ++o) {
+            bool conflito = inst.disciplinas[c].id_professor == inst.disciplinas[o].id_professor;
+            for (int q : curriculos_da_disciplina[c]) {
+                for (int q2 : curriculos_da_disciplina[o]) {
+                    if (q == q2) conflito = true;
+                }
+            }
+            disciplinas_em_conflito[c * inst.qtd_disciplinas + o] = conflito;
+        }
+    }
+
+    // Períodos indisponíveis por disciplina (H4)
+    indisponivel.assign(inst.qtd_disciplinas * inst.qtd_dias * inst.periodos_por_dia, false);
+    for (const auto& ind : inst.indisponibilidades) {
+        for (int c = 0; c < inst.qtd_disciplinas; ++c) {
+            if (inst.disciplinas[c].id == ind.id_disciplina) {
+                indisponivel[(c * inst.qtd_dias + ind.dia) * inst.periodos_por_dia + ind.periodo] = true;
+                break;
+            }
+        }
+    }
 }
 
 bool GradeHoraria::validar_movimento_viavel(int dia, int periodo, int sala_indice, int disciplina_indice) const {
@@ -234,5 +259,57 @@ std::string GradeHoraria::obter_pior_gargalo() const {
     if (total == 0) return "NENHUM";
     
     // Se houver penalidade, por enquanto apontaremos para a genérica ou para a pior conhecida
-    return "S1_S4"; 
+    return "S1_S4";
+}
+
+// Tamanho do domínio da disciplina: posições (dia, período, sala) permitidas pela H4
+int GradeHoraria::tamanho_dominio(int disciplina_indice) const {
+    int periodos_livres = 0;
+    for (int d = 0; d < inst.qtd_dias; ++d) {
+        for (int p = 0; p < inst.periodos_por_dia; ++p) {
+            if (!esta_indisponivel(disciplina_indice, d, p)) periodos_livres++;
+        }
+    }
+    return periodos_livres * inst.qtd_salas;
+}
+
+// Número de outras disciplinas com que esta conflita (mesmo professor ou currículo em comum)
+int GradeHoraria::grau_conflitos(int disciplina_indice) const {
+    int grau = 0;
+    for (int o = 0; o < inst.qtd_disciplinas; ++o) {
+        if (o != disciplina_indice && conflitam(disciplina_indice, o)) grau++;
+    }
+    return grau;
+}
+
+// Para cada posição permitida pela H4, as aulas (disciplina, sala) que precisariam sair para a disciplina entrar:
+// o ocupante da sala (H2) e as aulas do mesmo período com o mesmo professor ou currículo em comum (H3)
+std::vector<std::tuple<int, int, int, std::vector<std::pair<int, int>>>>
+GradeHoraria::conflitos_por_posicao(int disciplina_indice) const {
+    std::vector<std::tuple<int, int, int, std::vector<std::pair<int, int>>>> posicoes;
+    for (int d = 0; d < inst.qtd_dias; ++d) {
+        for (int p = 0; p < inst.periodos_por_dia; ++p) {
+            if (esta_indisponivel(disciplina_indice, d, p)) continue;
+
+            // Conflitos de H3 valem para qualquer sala do período
+            std::vector<std::pair<int, int>> conflitos_periodo;
+            for (int s = 0; s < inst.qtd_salas; ++s) {
+                int ocupante = matriz[d][p][s];
+                if (ocupante != -1 && conflitam(disciplina_indice, ocupante)) {
+                    conflitos_periodo.push_back({ocupante, s});
+                }
+            }
+
+            for (int r = 0; r < inst.qtd_salas; ++r) {
+                std::vector<std::pair<int, int>> conflitos = conflitos_periodo;
+                int ocupante = matriz[d][p][r];
+                // O ocupante da sala sai pela H2, a menos que já esteja na lista pela H3
+                if (ocupante != -1 && !conflitam(disciplina_indice, ocupante)) {
+                    conflitos.push_back({ocupante, r});
+                }
+                posicoes.emplace_back(d, p, r, conflitos);
+            }
+        }
+    }
+    return posicoes;
 }
