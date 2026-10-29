@@ -1,5 +1,6 @@
 import core_otimizador
 import os
+import copy
 
 pasta = "dados"
 dataset = "EarlyDatasets"
@@ -101,6 +102,17 @@ if core_otimizador.Parser.carregar_ctt(caminho_instancia, instancia):
     print("\nTESTE 7: Validando Restrição Rígida H1 (Alocação Completa)...")
     grade_completa = grade.validar_alocacao_completa()
     print(f" -> A grade possui todas as aulas exigidas alocadas? {grade_completa} (Esperado: False - pois a grade está quase vazia)")
+
+    # -----------------------------------------------------------------
+    # TESTE 8: CÓPIA DA GRADE NO C++ (ELITISMO)
+    # -----------------------------------------------------------------
+    print("\nTESTE 8: Validando a cópia da grade (usada para guardar a melhor solução)...")
+    copia = copy.deepcopy(grade_teste)
+    grade_teste.remover_aula(0, 0, 0)  # altera só a original
+    print(f" -> Custo da cópia depois de alterar a original: {copia.calcular_total_penalidades()} (Esperado: 54)")
+    # Na original o período 0 ficou livre para o currículo q000; na cópia, c0001 continua lá
+    print(f" -> Alocar Disciplina 1 no período 0 da original: {grade_teste.alocar_aula(0, 0, 1, 1)} (Esperado: True)")
+    print(f" -> Alocar Disciplina 1 no período 0 da cópia: {copia.alocar_aula(0, 0, 1, 1)} (Esperado: False)")
 
     print("\n" + "=" * 60)
     print("FIM DO ROTEIRO: AMBIENTE INTEGRADO E FUNCIONANDO SEM ERROS!")

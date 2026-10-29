@@ -23,3 +23,6 @@ dados/HiddenDatasets/
 
 # Arquivos de contexto
 *.pdf
+
+# Soluções geradas pelo q_learning.py
+resultados/

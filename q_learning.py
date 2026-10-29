@@ -3,16 +3,19 @@ import os
 import random
 import collections
 import copy
+import argparse
+import time
+import json
 
 
 # A ESTRUTURA DO AGENTE DE Q-LEARNING
 class AgenteQLearning:
-    def __init__(self, num_acoes=4, alpha=0.1, gamma=0.9, epsilon=1.0, epsilon_decay=0.995, epsilon_min=0.01):
-        self.alpha = alpha          
-        self.gamma = gamma          
-        self.epsilon = epsilon      
-        self.epsilon_decay = epsilon_decay  
-        self.epsilon_min = epsilon_min      
+    def __init__(self, num_acoes=4, alpha=0.1, gamma=0.9, epsilon=1.0, epsilon_min=0.01):
+        self.alpha = alpha
+        self.gamma = gamma
+        self.epsilon_inicial = epsilon
+        self.epsilon = epsilon
+        self.epsilon_min = epsilon_min
         self.num_acoes = num_acoes
         
         # Q-Table baseada em dicionário: chave=(viavel, gargalo, estagnado) -> valor=[Q0, Q1, Q2, Q3]
@@ -56,9 +59,10 @@ class AgenteQLearning:
         max_q_futuro = max(self.q_table[estado_novo])
         self.q_table[estado_antigo][acao] = q_antigo + self.alpha * (recompensa + self.gamma * max_q_futuro - q_antigo)
 
-    def decair_epsilon(self):
-        if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
+    def atualizar_epsilon(self, progresso):
+        """ Decaimento geométrico pela fração do orçamento já usada: ε_inicial em 0, ε_min em 1 """
+        self.epsilon = max(self.epsilon_min,
+                           self.epsilon_inicial * (self.epsilon_min / self.epsilon_inicial) ** progresso)
 
 #  Geração gulosa - tenta preencher a grade o máximo possível e caso sobre aulas passa esse id
 def gerar_solucao_inicial_gulosa(grade, instancia):
@@ -236,22 +240,55 @@ def aplicar_heuristica_baixo_nivel(acao, grade, instancia, aulas_pendentes, agen
         grade.alocar_aula(d, p, s, disc_alvo)
         return False
 
-# CONTEXTO DE EXECUÇÃO E LOOP DE TREINO (TESTE)
-pasta = "dados"
-dataset = "EarlyDatasets"
-nome_arquivo = "comp01.ctt.txt"
-caminho_instancia = os.path.join(pasta, dataset, nome_arquivo)
+# PARÂMETROS DA EXECUÇÃO (linha de comando)
+def ler_argumentos():
+    parser = argparse.ArgumentParser(description="Hiper-heurística com Q-Learning para o CB-CTT (ITC-2007)")
+    parser.add_argument("instancia", nargs="?", default="comp01", help="ex.: comp05")
+    parser.add_argument("--dataset", default="EarlyDatasets")
+    parser.add_argument("--seed", type=int, help="sem valor, sorteia uma e mostra na tela")
+    parser.add_argument("--tempo", type=float, default=65.0, help="limite em segundos (benchmark ITC: 65)")
+    parser.add_argument("--iteracoes", type=int, help="para por iterações em vez de tempo (execução repetível)")
+    parser.add_argument("--saida", help="padrão: resultados/<dataset>/<instancia>_seed<seed>.sol")
+    return parser.parse_args()
 
-instancia = core_otimizador.Instancia()
+# SAÍDA NO FORMATO DA COMPETIÇÃO
+def salvar_solucao_itc(caminho, grade, instancia):
+    """ Uma linha 'disciplina sala dia periodo' por aula: o formato lido pelo validador oficial """
+    os.makedirs(os.path.dirname(caminho) or ".", exist_ok=True)
+    with open(caminho, "w") as arquivo:
+        for d in range(instancia.qtd_dias):
+            for p in range(instancia.periodos_por_dia):
+                for s in range(instancia.qtd_salas):
+                    disc = grade.obter_disciplina_na_gaveta(d, p, s)
+                    if disc != -1:
+                        arquivo.write(f"{instancia.disciplinas[disc].id} {instancia.salas[s].id} {d} {p}\n")
 
-if core_otimizador.Parser.carregar_ctt(caminho_instancia, instancia):
+# CONTEXTO DE EXECUÇÃO E LOOP DE TREINO
+def main():
+    args = ler_argumentos()
+    inicio = time.perf_counter()  # o relógio conta tudo: leitura, construção gulosa e busca
+
+    # SEMENTE: sorteada uma única vez; toda a aleatoriedade está no Python (o núcleo C++ não sorteia nada)
+    seed = args.seed if args.seed is not None else random.randrange(1, 1_000_000)
+    random.seed(seed)
+
+    nome = args.instancia.removesuffix(".ctt.txt")
+    caminho_instancia = os.path.join("dados", args.dataset, nome + ".ctt.txt")
+    caminho_saida = args.saida or os.path.join("resultados", args.dataset, f"{nome}_seed{seed}.sol")
+    criterio = f"{args.iteracoes} iterações" if args.iteracoes else f"{args.tempo:.0f} s"
+
+    instancia = core_otimizador.Instancia()
+    if not core_otimizador.Parser.carregar_ctt(caminho_instancia, instancia):
+        print(f"[ERRO] Não foi possível abrir {caminho_instancia}")
+        return
+
     print("=" * 60)
-    print("INICIANDO TREINAMENTO EXPERIMENTAL DO AGENTE Q-LEARNING")
+    print(f"Q-LEARNING | instância {nome} | seed {seed} | parada: {criterio}")
     print("=" * 60)
-    
+
     grade = core_otimizador.GradeHoraria(instancia)
-    agente = AgenteQLearning(num_acoes=5, epsilon_decay=0.998)
-    
+    agente = AgenteQLearning(num_acoes=5)
+
     # 1. GERAÇÃO INICIAL
     aulas_pendentes = gerar_solucao_inicial_gulosa(grade, instancia)
     qtd_pendentes_anterior = len(aulas_pendentes)
@@ -259,75 +296,110 @@ if core_otimizador.Parser.carregar_ctt(caminho_instancia, instancia):
     total_exigido = sum(d.num_aulas for d in instancia.disciplinas)
     print(f"Total de aulas exigidas pelo arquivo: {total_exigido}")
 
-    # --- OTIMIZAÇÃO E ELITISMO ---
     # Tamanho dinâmico da Lista Tabu baseado no tamanho da instância
     agente.lista_tabu = collections.deque(maxlen=max(20, int(total_exigido * 0.1)))
-    
-    melhor_custo_historico = float('inf')
-    melhor_grade_historica = None 
 
-    for iteracao in range(1, 10001): 
+    # ELITISMO: melhor grade em ordem lexicográfica (aulas pendentes, custo), como em Geiger (§4.1)
+    melhor = (qtd_pendentes_anterior, custo_anterior)
+    melhor_grade = copy.deepcopy(grade)  # cópia feita no C++
+    melhor_em = time.perf_counter() - inicio  # segundo em que a melhor solução foi encontrada
+    viavel_em = None  # (iteração, segundos) em que a grade ficou completa pela primeira vez
+    proximo_log = 0.05
+
+    iteracao = 0
+    while True:
+        # CRITÉRIO DE PARADA: fração do orçamento (tempo ou iterações) já usada
+        if args.iteracoes:
+            progresso = iteracao / args.iteracoes
+        else:
+            progresso = (time.perf_counter() - inicio) / args.tempo
+        if progresso >= 1:
+            break
+        iteracao += 1
+
         estado_atual = agente.obter_estado(grade)
         acao = agente.escolher_acao(estado_atual)
-        
+
         # 2. APLICA A AÇÃO
         alterou = aplicar_heuristica_baixo_nivel(acao, grade, instancia, aulas_pendentes, agente)
 
         # 3. ATUALIZA AS MÉTRICAS
         qtd_pendentes_novo = len(aulas_pendentes)
-        custo_novo = grade.calcular_total_penalidades() 
+        custo_novo = grade.calcular_total_penalidades()
         estado_novo = agente.obter_estado(grade)
-        
-        # --- ELITISMO: Salva a matriz se quebrarmos o recorde ---
-        if qtd_pendentes_novo == 0 and custo_novo < melhor_custo_historico:
-            melhor_custo_historico = custo_novo
-            try:
-                melhor_grade_historica = copy.deepcopy(grade)
-            except TypeError:
-                pass # Ignora silenciosamente se o pybind11 bloquear o deepcopy sem método customizado
+
+        if (qtd_pendentes_novo, custo_novo) < melhor:
+            melhor = (qtd_pendentes_novo, custo_novo)
+            melhor_grade = copy.deepcopy(grade)
+            melhor_em = time.perf_counter() - inicio
+        if qtd_pendentes_novo == 0 and viavel_em is None:
+            viavel_em = (iteracao, time.perf_counter() - inicio)
 
         # 4. ÁRBITRO HÍBRIDO E CONTROLE DE ESTAGNAÇÃO
         if alterou:
             if estado_atual[0] == 0: # Fase 1 (Grade Inválida)
                 if qtd_pendentes_novo < qtd_pendentes_anterior:
-                    recompensa = 10.0  
+                    recompensa = 10.0
                     agente.iteracoes_sem_melhora = 0 # Zerou a estagnação
                 elif qtd_pendentes_novo > qtd_pendentes_anterior:
-                    recompensa = -5.0  
+                    recompensa = -5.0
                     agente.iteracoes_sem_melhora += 1
                 else:
-                    recompensa = 0.0   
+                    recompensa = 0.0
                     agente.iteracoes_sem_melhora += 1
             else: # Fase 2 (Grade Válida)
                 if custo_novo < custo_anterior:
-                    recompensa = 1.0   
+                    recompensa = 1.0
                     agente.iteracoes_sem_melhora = 0 # Zerou a estagnação
                 elif custo_novo > custo_anterior:
-                    recompensa = -1.0  
+                    recompensa = -1.0
                     agente.iteracoes_sem_melhora += 1
                 else:
-                    recompensa = -0.1  
+                    recompensa = -0.1
                     agente.iteracoes_sem_melhora += 1
         else:
-            recompensa = -1.0      
+            recompensa = -1.0
             agente.iteracoes_sem_melhora += 1
-            
+
         # 5. APRENDIZADO
         agente.atualizar_politica(estado_atual, acao, recompensa, estado_novo)
-        agente.decair_epsilon()
-        
+        agente.atualizar_epsilon(progresso)
+
         qtd_pendentes_anterior = qtd_pendentes_novo
-        custo_anterior = custo_novo 
-    
-        # TERMINAL DE ACOMPANHAMENTO 
-        if iteracao % 20 == 0:
-            status = "VÁLIDA" if len(aulas_pendentes) == 0 else "INVÁLIDA"
-            print(f"Iter {iteracao:04d} | Eps: {agente.epsilon:.3f} | Pend: {len(aulas_pendentes)} | Status: {status} | Custo Atual: {custo_novo} | Recorde: {melhor_custo_historico}")
-            
+        custo_anterior = custo_novo
+
+        # TERMINAL DE ACOMPANHAMENTO: uma linha a cada 5% do orçamento
+        if progresso >= proximo_log:
+            proximo_log += 0.05
+            status = "VÁLIDA" if qtd_pendentes_novo == 0 else "INVÁLIDA"
+            print(f"{time.perf_counter() - inicio:5.1f}s | Iter {iteracao} | Eps: {agente.epsilon:.3f} | "
+                  f"Pend: {qtd_pendentes_novo} | Status: {status} | Custo: {custo_novo} | "
+                  f"Melhor: pend={melhor[0]} custo={melhor[1]}")
+
+    salvar_solucao_itc(caminho_saida, melhor_grade, instancia)  # única leitura célula a célula
+
     print("\n" + "=" * 60)
-    print(f"TREINAMENTO ENCERRADO. O melhor custo viável encontrado foi: {melhor_custo_historico}")
+    print(f"FIM | {iteracao} iterações em {time.perf_counter() - inicio:.1f} s | seed {seed}")
+    if viavel_em:
+        print(f"Grade completa pela primeira vez na iteração {viavel_em[0]} ({viavel_em[1]:.1f} s)")
+    else:
+        print("A grade nunca ficou completa (H1 violada)")
+    print(f"Melhor solução: {melhor[0]} aulas pendentes, custo {melhor[1]}")
+    print(f"Solução gravada em {caminho_saida}")
     print("Tamanho da Q-Table gerada:", len(agente.q_table))
     print("Mapeamento de Estados Aprendidos:")
     for estado, acoes in agente.q_table.items():
         print(f" -> Estado {estado}: Valores Q {acoes}")
     print("=" * 60)
+
+    # Última linha: resumo em formato fixo, lido pelo experimentos.py
+    print("RESUMO " + json.dumps({
+        "instancia": nome, "seed": seed, "iteracoes": iteracao,
+        "tempo_total": round(time.perf_counter() - inicio, 2),
+        "tempo_melhor": round(melhor_em, 2),
+        "tempo_viavel": round(viavel_em[1], 2) if viavel_em else None,
+        "pendentes": melhor[0], "custo": melhor[1]}))
+
+
+if __name__ == "__main__":
+    main()

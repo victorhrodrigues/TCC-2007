@@ -37,6 +37,9 @@ PYBIND11_MODULE(core_otimizador, m) {
 
     py::class_<GradeHoraria>(m, "GradeHoraria")
         .def(py::init<const Instancia&>()) // Construtor recebendo a instância
+        // Cópia feita no C++ (construtor de cópia): habilita copy.copy e copy.deepcopy no Python
+        .def("__copy__", [](const GradeHoraria& self) { return GradeHoraria(self); })
+        .def("__deepcopy__", [](const GradeHoraria& self, py::dict) { return GradeHoraria(self); }, py::arg("memo"))
         .def("alocar_aula", &GradeHoraria::alocar_aula)
         .def("remover_aula", &GradeHoraria::remover_aula)
         .def("obter_disciplina_na_gaveta", &GradeHoraria::obter_disciplina_na_gaveta)
