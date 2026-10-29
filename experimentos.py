@@ -131,7 +131,9 @@ def main():
                 csv.DictWriter(f, COLUNAS).writerow(linha)
 
             aviso = f"  ({val['violacoes_hard']} violações rígidas)" if val["violacoes_hard"] else ""
-            if val["custo"] != resumo["custo"]:  # conferência cruzada: validador oficial x nosso C++
+            # Conferência cruzada (validador oficial x nosso C++) só em grades viáveis: em grades incompletas o
+            # validador também cobra a S3 de disciplinas sem nenhuma aula, e esse custo não entra nas estatísticas
+            if val["violacoes_hard"] == 0 and val["custo"] != resumo["custo"]:
                 aviso += f"  [ATENÇÃO: C++ calculou {resumo['custo']}]"
             print(f"custo {val['custo']}{aviso}")
 

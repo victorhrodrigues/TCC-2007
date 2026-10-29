@@ -8,6 +8,13 @@ import time
 import json
 
 
+# AÇÕES QUE PODEM AGIR EM CADA FASE (máscara de ações), indexadas por viavel
+ACOES_POR_FASE = {
+    0: [2],           # Fase 1 (grade incompleta): só o Ruin-and-Recreate age com aulas pendentes
+    1: [0, 1, 3, 4],  # Fase 2 (grade completa): ações de otimização do custo
+}
+
+
 # A ESTRUTURA DO AGENTE DE Q-LEARNING
 class AgenteQLearning:
     def __init__(self, num_acoes=4, alpha=0.1, gamma=0.9, epsilon=1.0, epsilon_min=0.01):
@@ -44,19 +51,20 @@ class AgenteQLearning:
         return (viavel, custo_bin, estagnado) # trocar estagnado para 0 para testar sem o estado
 
     def escolher_acao(self, estado):
-        """ Política Epsilon-Greedy """
+        """ Política Epsilon-Greedy restrita às ações que podem agir na fase do estado """
+        validas = ACOES_POR_FASE[estado[0]]
         if random.random() < self.epsilon:
-            return random.randint(0, self.num_acoes - 1) # Exploração
-        
+            return random.choice(validas) # Exploração
+
         valores_q = self.q_table[estado]
-        max_q = max(valores_q)
-        acoes_com_max_q = [i for i, v in enumerate(valores_q) if v == max_q]
+        max_q = max(valores_q[a] for a in validas)
+        acoes_com_max_q = [a for a in validas if valores_q[a] == max_q]
         return random.choice(acoes_com_max_q) # Explotação
 
     def atualizar_politica(self, estado_antigo, acao, recompensa, estado_novo):
-        """ Equação de Bellman """
+        """ Equação de Bellman (o máximo futuro considera só as ações válidas no novo estado) """
         q_antigo = self.q_table[estado_antigo][acao]
-        max_q_futuro = max(self.q_table[estado_novo])
+        max_q_futuro = max(self.q_table[estado_novo][a] for a in ACOES_POR_FASE[estado_novo[0]])
         self.q_table[estado_antigo][acao] = q_antigo + self.alpha * (recompensa + self.gamma * max_q_futuro - q_antigo)
 
     def atualizar_epsilon(self, progresso):
@@ -263,6 +271,26 @@ def salvar_solucao_itc(caminho, grade, instancia):
                     if disc != -1:
                         arquivo.write(f"{instancia.disciplinas[disc].id} {instancia.salas[s].id} {d} {p}\n")
 
+# FUNÇÃO DE RECOMPENSA (proporcional ao progresso)
+PENALIDADE_SEM_PROGRESSO = -0.1  # a ação falhou ou não mudou nada: só gastou tempo
+LIMITE_FASE2 = 5.0               # teto da Fase 2, abaixo do +10 de uma aula reparada (viabilidade vem primeiro)
+
+def calcular_recompensa(estado, alterou, pend_anterior, pend_novo, custo_anterior, custo_novo):
+    """ Retorna (recompensa, houve_progresso) """
+    if estado[0] == 0:  # Fase 1 (grade incompleta): progresso = aulas que saíram da fila
+        progresso = pend_anterior - pend_novo
+        if not alterou or progresso == 0:
+            return PENALIDADE_SEM_PROGRESSO, False
+        if progresso > 0:
+            return 10.0 * progresso, True    # +10 por aula alocada
+        return 5.0 * progresso, False        # −5 por aula devolvida à fila
+
+    # Fase 2 (grade completa): progresso = queda percentual do custo
+    variacao = 100.0 * (custo_anterior - custo_novo) / max(custo_anterior, 1)
+    if not alterou or variacao == 0:
+        return PENALIDADE_SEM_PROGRESSO, False
+    return max(-LIMITE_FASE2, min(LIMITE_FASE2, variacao)), variacao > 0
+
 # CONTEXTO DE EXECUÇÃO E LOOP DE TREINO
 def main():
     args = ler_argumentos()
@@ -335,30 +363,12 @@ def main():
         if qtd_pendentes_novo == 0 and viavel_em is None:
             viavel_em = (iteracao, time.perf_counter() - inicio)
 
-        # 4. ÁRBITRO HÍBRIDO E CONTROLE DE ESTAGNAÇÃO
-        if alterou:
-            if estado_atual[0] == 0: # Fase 1 (Grade Inválida)
-                if qtd_pendentes_novo < qtd_pendentes_anterior:
-                    recompensa = 10.0
-                    agente.iteracoes_sem_melhora = 0 # Zerou a estagnação
-                elif qtd_pendentes_novo > qtd_pendentes_anterior:
-                    recompensa = -5.0
-                    agente.iteracoes_sem_melhora += 1
-                else:
-                    recompensa = 0.0
-                    agente.iteracoes_sem_melhora += 1
-            else: # Fase 2 (Grade Válida)
-                if custo_novo < custo_anterior:
-                    recompensa = 1.0
-                    agente.iteracoes_sem_melhora = 0 # Zerou a estagnação
-                elif custo_novo > custo_anterior:
-                    recompensa = -1.0
-                    agente.iteracoes_sem_melhora += 1
-                else:
-                    recompensa = -0.1
-                    agente.iteracoes_sem_melhora += 1
+        # 4. RECOMPENSA E CONTROLE DE ESTAGNAÇÃO
+        recompensa, houve_progresso = calcular_recompensa(estado_atual, alterou, qtd_pendentes_anterior,
+                                                          qtd_pendentes_novo, custo_anterior, custo_novo)
+        if houve_progresso:
+            agente.iteracoes_sem_melhora = 0
         else:
-            recompensa = -1.0
             agente.iteracoes_sem_melhora += 1
 
         # 5. APRENDIZADO
