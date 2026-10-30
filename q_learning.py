@@ -109,6 +109,34 @@ def gerar_solucao_inicial_gulosa(grade, instancia):
     print(f" -> Aulas que ficaram de fora (Violação H1): {len(aulas_pendentes)}")
     return aulas_pendentes
 
+
+def aulas_por_disciplina(grade, instancia):
+    """ Varre a grade e devolve, para cada disciplina, as posições (d, p, s) das suas aulas """
+    aulas = collections.defaultdict(list)
+    for d in range(instancia.qtd_dias):
+        for p in range(instancia.periodos_por_dia):
+            for s in range(instancia.qtd_salas):
+                disc = grade.obter_disciplina_na_gaveta(d, p, s)
+                if disc != -1:
+                    aulas[disc].append((d, p, s))
+    return aulas
+
+
+def trocar_sala(grade, d, p, s_de, s_para):
+    """ No período (d, p), a aula da sala s_de passa para a sala s_para, e o ocupante de s_para, se houver,
+    passa para s_de. Sempre viável: H3 e H4 só dependem do período, e a troca mantém a H2.
+    Chamar de novo com as salas invertidas desfaz a troca """
+    disc = grade.obter_disciplina_na_gaveta(d, p, s_de)
+    ocupante = grade.obter_disciplina_na_gaveta(d, p, s_para)
+    grade.remover_aula(d, p, s_de)
+    ok = True
+    if ocupante != -1:
+        grade.remover_aula(d, p, s_para)
+        ok = grade.alocar_aula(d, p, s_de, ocupante)
+    ok = grade.alocar_aula(d, p, s_para, disc) and ok
+    if not ok:  # não deveria acontecer; se acontecer, para em vez de perder uma aula em silêncio
+        raise RuntimeError(f"troca de sala recusada em ({d}, {p}): sala {s_de} <-> sala {s_para}")
+
 # HEURÍSTICAS DE BAIXO NÍVEL (AS AÇÕES DO AGENTE)
 def aplicar_heuristica_baixo_nivel(acao, grade, instancia, aulas_pendentes, agente):
     """ Modifica a grade protegendo a integridade dos dados (Sem vazar aulas) """
@@ -206,48 +234,42 @@ def aplicar_heuristica_baixo_nivel(acao, grade, instancia, aulas_pendentes, agen
         if disc1 != -1: grade.alocar_aula(d1, p1, s1, disc1)
         if disc2 != -1: grade.alocar_aula(d2, p2, s2, disc2)
         return False
-    elif acao == 4: 
-        # [A4] TARGETED SOFT-FIX (Inspirado em Lü e Hao)
-        # Foca em corrigir Estabilidade de Sala (S2) e Compactação do Currículo (S4)
-        if aulas_pendentes: return False 
-        
-        # 1. Seleciona uma aula aleatória da grade
-        d, p, s = random.randint(0, instancia.qtd_dias - 1), random.randint(0, instancia.periodos_por_dia - 1), random.randint(0, instancia.qtd_salas - 1)
-        disc_alvo = grade.obter_disciplina_na_gaveta(d, p, s)
-        if disc_alvo == -1: return False
-        
+    elif acao == 4:
+        # [A4] AÇÃO DE SALA (Room Stability Move de Müller §4.3; ClassToSameRoom e ClassToOtherRoom do QuikFix)
+        # Escolhe uma disciplina penalizada em S1 ou S2 e testa pôr todas as suas aulas numa mesma sala, cada
+        # aula no seu período, trocando com o ocupante quando a sala estiver ocupada. Só mexe em S1 e S2
+        if aulas_pendentes: return False
+        aulas = aulas_por_disciplina(grade, instancia)
+        penalizadas = [c for c, posicoes in aulas.items()
+                       if len({s for _, _, s in posicoes}) > 1                                  # S2: mais de uma sala
+                       or any(agente.alunos[c] > agente.capacidade[s] for _, _, s in posicoes)]  # S1: sala pequena
+        if not penalizadas: return False
+        disc_alvo = random.choice(sorted(penalizadas))
+
+        # Salas candidatas: as que a disciplina já usa (S2) e até 3 outras em que a turma cabe (S1)
+        usadas = sorted({s for _, _, s in aulas[disc_alvo]})
+        cabem = [s for s in range(instancia.qtd_salas)
+                 if s not in usadas and agente.capacidade[s] >= agente.alunos[disc_alvo]]
+        candidatas = usadas + random.sample(cabem, min(3, len(cabem)))
+
         custo_atual_base = grade.calcular_total_penalidades()
-        grade.remover_aula(d, p, s)
-        
-        melhor_custo = float('inf')
-        melhor_destino = None
-        
-        # 2. Vizinhança Cirúrgica: Testa posições APENAS no mesmo dia ou na mesma sala
-        alvos_estrategicos = []
-        for _ in range(5):
-            # Tenta agrupar no MESMO DIA (outro período, sala aleatória) - Foco em S4 (Compactação)
-            alvos_estrategicos.append((d, random.randint(0, instancia.periodos_por_dia - 1), random.randint(0, instancia.qtd_salas - 1)))
-            
-            # Tenta agrupar na MESMA SALA (outro dia, período aleatório) - Foco em S2 (Estabilidade)
-            alvos_estrategicos.append((random.randint(0, instancia.qtd_dias - 1), random.randint(0, instancia.periodos_por_dia - 1), s))
-            
-        # 3. Avalia os alvos estratégicos
-        for d_t, p_t, s_t in alvos_estrategicos:
-            if grade.espaco_esta_livre(d_t, p_t, s_t) and grade.alocar_aula(d_t, p_t, s_t, disc_alvo):
-                custo_teste = grade.calcular_total_penalidades()
-                if custo_teste < melhor_custo:
-                    melhor_custo = custo_teste
-                    melhor_destino = (d_t, p_t, s_t)
-                grade.remover_aula(d_t, p_t, s_t)
-                
-        # 4. Só aceita se a jogada cirúrgica reduziu o custo
-        if melhor_destino and melhor_custo < custo_atual_base:
-            grade.alocar_aula(*melhor_destino, disc_alvo)
-            return True
-            
-        # 5. Rollback: desfaz se a vizinhança cirúrgica não foi útil
-        grade.alocar_aula(d, p, s, disc_alvo)
-        return False
+        melhor_custo, melhor_sala = custo_atual_base, None
+        for s_alvo in candidatas:
+            movidas = [(d, p, s) for d, p, s in aulas[disc_alvo] if s != s_alvo]
+            for d, p, s in movidas:
+                trocar_sala(grade, d, p, s, s_alvo)
+            custo_teste = grade.calcular_total_penalidades()
+            for d, p, s in movidas:
+                trocar_sala(grade, d, p, s_alvo, s)  # desfaz o teste
+            if custo_teste < melhor_custo:
+                melhor_custo, melhor_sala = custo_teste, s_alvo
+
+        # Só aceita se reduziu o custo
+        if melhor_sala is None: return False
+        for d, p, s in aulas[disc_alvo]:
+            if s != melhor_sala:
+                trocar_sala(grade, d, p, s, melhor_sala)
+        return True
 
     elif acao == 5:
         # [A5] REPARO POR CONFLITOS (IFS + CBS, inspirado em Müller §3.1)
@@ -360,6 +382,10 @@ def main():
 
     # Dificuldade de cada disciplina para a IFS: domínio pequeno e muitos conflitos = difícil (estática, calculada uma vez)
     agente.dificuldade = [grade.tamanho_dominio(c) / max(1, grade.grau_conflitos(c)) for c in range(instancia.qtd_disciplinas)]
+
+    # Turma de cada disciplina e capacidade de cada sala, usadas pela ação de sala (fixas, lidas uma vez)
+    agente.alunos = [d.num_alunos for d in instancia.disciplinas]
+    agente.capacidade = [s.capacidade for s in instancia.salas]
 
     if args.politica == "aleatoria":
         agente.epsilon_inicial = agente.epsilon_min = 1.0  # ε fica em 1 durante toda a execução
