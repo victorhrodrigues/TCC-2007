@@ -11,7 +11,7 @@ import json
 # AÇÕES QUE PODEM AGIR EM CADA FASE (máscara de ações), indexadas por viavel
 ACOES_POR_FASE = {
     0: [2, 5],        # Fase 1 (grade incompleta): reconstrução reativa (Geiger) ou reparo por conflitos (Müller)
-    1: [0, 1, 3, 4],  # Fase 2 (grade completa): ações de otimização do custo
+    1: [0, 1, 3, 4, 6],  # Fase 2 (grade completa): ações de otimização do custo
 }
 
 
@@ -111,14 +111,10 @@ def gerar_solucao_inicial_gulosa(grade, instancia):
 
 
 def aulas_por_disciplina(grade, instancia):
-    """ Varre a grade e devolve, para cada disciplina, as posições (d, p, s) das suas aulas """
+    """ Para cada disciplina, as posições (d, p, s) das suas aulas, na ordem dia -> período -> sala """
     aulas = collections.defaultdict(list)
-    for d in range(instancia.qtd_dias):
-        for p in range(instancia.periodos_por_dia):
-            for s in range(instancia.qtd_salas):
-                disc = grade.obter_disciplina_na_gaveta(d, p, s)
-                if disc != -1:
-                    aulas[disc].append((d, p, s))
+    for d, p, s, disc in grade.listar_aulas():  # uma chamada ao C++ em vez de uma por posição
+        aulas[disc].append((d, p, s))
     return aulas
 
 
@@ -136,6 +132,25 @@ def trocar_sala(grade, d, p, s_de, s_para):
     ok = grade.alocar_aula(d, p, s_para, disc) and ok
     if not ok:  # não deveria acontecer; se acontecer, para em vez de perder uma aula em silêncio
         raise RuntimeError(f"troca de sala recusada em ({d}, {p}): sala {s_de} <-> sala {s_para}")
+
+
+def mover_aula(grade, d, p, s, d2, p2, s2):
+    """ Leva a aula de (d, p, s) para (d2, p2, s2); se o destino estiver ocupado, o ocupante vai para (d, p, s).
+    O C++ confere H2, H3 e H4 das duas aulas. Devolve True se deu certo; se não, deixa a grade como estava.
+    Depois de um movimento que deu certo, chamar com origem e destino invertidos desfaz """
+    a = grade.obter_disciplina_na_gaveta(d, p, s)
+    b = grade.obter_disciplina_na_gaveta(d2, p2, s2)
+    grade.remover_aula(d, p, s)
+    if b != -1:
+        grade.remover_aula(d2, p2, s2)
+    if grade.alocar_aula(d2, p2, s2, a):
+        if b == -1 or grade.alocar_aula(d, p, s, b):
+            return True
+        grade.remover_aula(d2, p2, s2)  # o ocupante não pode ir para a origem: desfaz
+    if b != -1:
+        grade.alocar_aula(d2, p2, s2, b)
+    grade.alocar_aula(d, p, s, a)
+    return False
 
 # HEURÍSTICAS DE BAIXO NÍVEL (AS AÇÕES DO AGENTE)
 def aplicar_heuristica_baixo_nivel(acao, grade, instancia, aulas_pendentes, agente):
@@ -307,6 +322,81 @@ def aplicar_heuristica_baixo_nivel(acao, grade, instancia, aulas_pendentes, agen
             aulas_pendentes.remove(b)
         return False
 
+    elif acao == 6:
+        # [A6] AÇÃO DE PERÍODO (Curriculum Compactness Move e Min Working Days Move de Müller §4.3;
+        # CompactCurricula e ClassToAvailablePeriod do QuikFix). Escolhe uma aula com um problema que só se
+        # resolve mudando de período (S4, S3 ou S1) e testa levá-la só para os períodos que o resolvem
+        if aulas_pendentes: return False
+        aulas = aulas_por_disciplina(grade, instancia)
+        D, P = instancia.qtd_dias, instancia.periodos_por_dia
+
+        ocupados = collections.defaultdict(set)  # currículo -> períodos (d, p) em que ele tem aula
+        for c, posicoes in aulas.items():
+            for q in agente.curriculos[c]:
+                ocupados[q].update((d, p) for d, p, _ in posicoes)
+
+        alvos = []  # (tipo, aula (d, p, s), disciplina, currículo)
+        for c, posicoes in aulas.items():
+            dias_c = collections.Counter(d for d, _, _ in posicoes)
+            abaixo_do_minimo = len(dias_c) < agente.dias_minimos[c]
+            for d, p, s in posicoes:
+                for q in agente.curriculos[c]:                      # S4: aula isolada no currículo q
+                    if (d, p - 1) not in ocupados[q] and (d, p + 1) not in ocupados[q]:
+                        alvos.append(("S4", (d, p, s), c, q))
+                if abaixo_do_minimo and dias_c[d] >= 2:             # S3: dia com 2+ aulas da disciplina
+                    alvos.append(("S3", (d, p, s), c, None))
+                if agente.alunos[c] > agente.capacidade[s]:         # S1: turma maior que a sala
+                    alvos.append(("S1", (d, p, s), c, None))
+        if not alvos: return False
+        tipo, (d, p, s), disc_alvo, q = random.choice(alvos)
+
+        # Períodos de destino que resolvem o problema (fora os que a disciplina já ocupa)
+        periodos_disc = {(d2, p2) for d2, p2, _ in aulas[disc_alvo]}
+        if tipo == "S4":    # colado em outra aula do currículo q
+            outros = ocupados[q] - {(d, p)}
+            destinos = {(d2, p2 + k) for d2, p2 in outros for k in (-1, 1) if 0 <= p2 + k < P} - outros
+        elif tipo == "S3":  # num dia em que a disciplina não tem aula
+            dias = {d2 for d2, _ in periodos_disc}
+            destinos = {(d2, p2) for d2 in range(D) if d2 not in dias for p2 in range(P)}
+        else:               # S1: qualquer outro período
+            destinos = {(d2, p2) for d2 in range(D) for p2 in range(P)}
+        destinos -= periodos_disc
+        if not destinos: return False
+
+        # Até 10 períodos de destino. Em cada um, as salas vão na ordem de encaixe: primeiro as que comportam a
+        # turma (entre elas, as livres antes das que exigem troca, depois as que a disciplina já usa, e a menor);
+        # as salas pequenas ficam por último. Vale a 1ª sala em que o movimento é viável, com troca do ocupante
+        # se a sala estiver ocupada (o C++ confere H3 e H4 das duas aulas): no máximo 1 avaliação por período
+        usadas = {s2 for _, _, s2 in aulas[disc_alvo]}
+        turma = agente.alunos[disc_alvo]
+        custo_atual_base = grade.calcular_total_penalidades()
+        melhor_custo, melhor_destino = custo_atual_base, None
+        for d2, p2 in random.sample(sorted(destinos), min(10, len(destinos))):
+            # H3 e H4 da aula só dependem do período: com H4 ou com 2+ aulas em conflito, nenhuma sala serve;
+            # com uma aula em conflito, só a troca com ela pode dar certo (as outras salas falhariam de qualquer jeito)
+            if grade.esta_indisponivel(disc_alvo, d2, p2): continue
+            ocupantes = [grade.obter_disciplina_na_gaveta(d2, p2, r) for r in range(instancia.qtd_salas)]
+            em_conflito = [r for r, o in enumerate(ocupantes) if o != -1 and o in agente.conflita[disc_alvo]]
+            if len(em_conflito) > 1: continue
+            ordem_salas = em_conflito or sorted(range(instancia.qtd_salas),
+                                                key=lambda r: (max(0, turma - agente.capacidade[r]),  # não estourar a S1
+                                                               ocupantes[r] != -1,                    # livre antes de troca
+                                                               r not in usadas,                       # S2
+                                                               agente.capacidade[r]))                 # a menor que comporta
+            for s2 in ordem_salas:
+                if mover_aula(grade, d, p, s, d2, p2, s2):
+                    custo_teste = grade.calcular_total_penalidades()
+                    if not mover_aula(grade, d2, p2, s2, d, p, s):  # desfaz o teste (não deveria falhar)
+                        raise RuntimeError(f"não foi possível desfazer o movimento ({d}, {p}, {s}) -> ({d2}, {p2}, {s2})")
+                    if custo_teste < melhor_custo:
+                        melhor_custo, melhor_destino = custo_teste, (d2, p2, s2)
+                    break  # a 1ª sala viável representa o período
+
+        # Só aceita se reduziu o custo
+        if melhor_destino is None: return False
+        mover_aula(grade, d, p, s, *melhor_destino)
+        return True
+
 # PARÂMETROS DA EXECUÇÃO (linha de comando)
 def ler_argumentos():
     parser = argparse.ArgumentParser(description="Hiper-heurística com Q-Learning para o CB-CTT (ITC-2007)")
@@ -378,7 +468,7 @@ def main():
     print("=" * 60)
 
     grade = core_otimizador.GradeHoraria(instancia)
-    agente = AgenteQLearning(num_acoes=6)
+    agente = AgenteQLearning(num_acoes=7)
 
     # Dificuldade de cada disciplina para a IFS: domínio pequeno e muitos conflitos = difícil (estática, calculada uma vez)
     agente.dificuldade = [grade.tamanho_dominio(c) / max(1, grade.grau_conflitos(c)) for c in range(instancia.qtd_disciplinas)]
@@ -386,6 +476,16 @@ def main():
     # Turma de cada disciplina e capacidade de cada sala, usadas pela ação de sala (fixas, lidas uma vez)
     agente.alunos = [d.num_alunos for d in instancia.disciplinas]
     agente.capacidade = [s.capacidade for s in instancia.salas]
+    agente.dias_minimos = [d.dias_minimos for d in instancia.disciplinas]  # usado pela ação de período
+
+    # Currículos de cada disciplina (relação N:N, vinda do C++), usados pela ação de período
+    agente.curriculos = [grade.curriculos_de(c) for c in range(instancia.qtd_disciplinas)]
+
+    # Disciplinas em conflito com cada uma (mesmo professor ou currículo em comum: H3), para a ação de período
+    professor = [d.id_professor for d in instancia.disciplinas]
+    agente.conflita = [{o for o in range(instancia.qtd_disciplinas)
+                        if professor[o] == professor[c] or set(agente.curriculos[o]) & set(agente.curriculos[c])}
+                       for c in range(instancia.qtd_disciplinas)]
 
     if args.politica == "aleatoria":
         agente.epsilon_inicial = agente.epsilon_min = 1.0  # ε fica em 1 durante toda a execução

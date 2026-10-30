@@ -68,32 +68,17 @@ bool GradeHoraria::validar_movimento_viavel(int dia, int periodo, int sala_indic
         return false;
     }
     
-    // REGRA H4 - Indisponibilidade 
-    std::string id_disciplina_atual = inst.disciplinas[disciplina_indice].id;
-    for (const auto& ind : inst.indisponibilidades) { 
-        if (ind.dia == dia && ind.periodo == periodo && ind.id_disciplina == id_disciplina_atual) {
-            return false; // Bloqueado! Horário marcado como indisponível no arquivo .ctt
-        }
-    }
+    // REGRA H4 - Indisponibilidade (tabela montada no construtor, em vez de comparar textos)
+    if (esta_indisponivel(disciplina_indice, dia, periodo)) return false;
 
     // H2 - A sala já está ocupada nesse horário?
     if (matriz[dia][periodo][sala_indice] != -1) return false;
 
-    // H3 (Professor): O professor dessa disciplina já está dando aula em outro lugar nesse horário
+    // H3 - Professor ou currículo em comum com alguma aula do período (tabela montada no construtor;
+    // equivale às checagens antigas de professor por texto e de currículo ocupado)
     for (int s = 0; s < inst.qtd_salas; ++s) {
-        int o_outro_idx = matriz[dia][periodo][s];
-        if (o_outro_idx != -1) {
-            if (inst.disciplinas[o_outro_idx].id_professor == inst.disciplinas[disciplina_indice].id_professor) {
-                return false; // Conflito de Professor detectado
-            }
-        }
-    }
-
-    // H3 (Currículo): Alunos de qualquer currículo dessa disciplina já estão em outra aula nesse horário
-    for (int curr_indice : curriculos_da_disciplina[disciplina_indice]) {
-        if (matriz_curriculo_ocupado[dia][periodo][curr_indice]) {
-            return false; // Conflito de Currículo detectado
-        }
+        int o = matriz[dia][periodo][s];
+        if (o != -1 && conflitam(disciplina_indice, o)) return false;
     }
 
     return true; // Movimento viável
@@ -282,6 +267,17 @@ int GradeHoraria::grau_conflitos(int disciplina_indice) const {
         if (o != disciplina_indice && conflitam(disciplina_indice, o)) grau++;
     }
     return grau;
+}
+
+// Todas as aulas alocadas, na ordem dia -> período -> sala: (dia, período, sala, disciplina).
+// Uma chamada só, em vez de uma por posição a partir do Python
+std::vector<std::tuple<int, int, int, int>> GradeHoraria::listar_aulas() const {
+    std::vector<std::tuple<int, int, int, int>> aulas;
+    for (int d = 0; d < inst.qtd_dias; ++d)
+        for (int p = 0; p < inst.periodos_por_dia; ++p)
+            for (int s = 0; s < inst.qtd_salas; ++s)
+                if (matriz[d][p][s] != -1) aulas.emplace_back(d, p, s, matriz[d][p][s]);
+    return aulas;
 }
 
 // Para cada posição permitida pela H4, as aulas (disciplina, sala) que precisariam sair para a disciplina entrar:
