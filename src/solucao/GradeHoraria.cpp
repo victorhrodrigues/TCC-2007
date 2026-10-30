@@ -1,5 +1,7 @@
 #include "GradeHoraria.hpp"
 #include <iostream>
+#include <random>
+#include <algorithm>
 
 GradeHoraria::GradeHoraria(const Instancia& instancia) : inst(instancia) {
     // -1 = espaço livre para marcação em sala
@@ -312,4 +314,96 @@ GradeHoraria::conflitos_por_posicao(int disciplina_indice) const {
         }
     }
     return posicoes;
+}
+
+// Reconstrução reativa de Geiger (§3.3): monta uma grade nova do zero, colocando primeiro as aulas
+// prioritárias (as que ficaram de fora antes) e depois as demais, sempre a disciplina mais crítica
+// (menos posições livres) primeiro. Só substitui a grade atual se ficarem de fora no máximo
+// max_nao_alocadas aulas. Devolve (substituiu, aulas que ficaram de fora).
+std::pair<bool, std::vector<int>> GradeHoraria::reconstruir(const std::vector<int>& prioritarias,
+                                                           unsigned int semente, int max_nao_alocadas) {
+    std::mt19937 gerador(semente);
+    const int C = inst.qtd_disciplinas, D = inst.qtd_dias, P = inst.periodos_por_dia, R = inst.qtd_salas;
+    GradeHoraria nova(inst);  // grade vazia
+
+    // Classes de sala por disciplina (Geiger §3.1): 1 = melhor encaixe (menor folga >= 0),
+    // 2 = cabe mas não é o melhor encaixe, 3 = não cabe
+    std::vector<int> classe(C * R);
+    for (int c = 0; c < C; ++c) {
+        int menor_folga = -1;
+        for (int r = 0; r < R; ++r) {
+            int folga = inst.salas[r].capacidade - inst.disciplinas[c].num_alunos;
+            if (folga >= 0 && (menor_folga == -1 || folga < menor_folga)) menor_folga = folga;
+        }
+        for (int r = 0; r < R; ++r) {
+            int folga = inst.salas[r].capacidade - inst.disciplinas[c].num_alunos;
+            classe[c * R + r] = folga < 0 ? 3 : (folga == menor_folga ? 1 : 2);
+        }
+    }
+
+    // Estado incremental: salas livres em cada período e períodos bloqueados por conflito (H3) para cada disciplina
+    std::vector<int> salas_livres(D * P, R);
+    std::vector<char> bloqueado(C * D * P, 0);
+
+    // Aulas a colocar por disciplina, em dois grupos: as prioritárias e as demais
+    std::vector<int> grupo_prioritario(C, 0), grupo_normal(C, 0);
+    for (int c : prioritarias) grupo_prioritario[c]++;
+    for (int c = 0; c < C; ++c) grupo_normal[c] = std::max(0, inst.disciplinas[c].num_aulas - grupo_prioritario[c]);
+
+    std::vector<int> nao_alocadas;
+    for (std::vector<int>* grupo : {&grupo_prioritario, &grupo_normal}) {
+        while (true) {
+            // Disciplina mais crítica do grupo: a que tem menos posições livres (empate sorteado)
+            int menor = -1;
+            std::vector<int> criticas;
+            for (int c = 0; c < C; ++c) {
+                if ((*grupo)[c] == 0) continue;
+                int livres = 0;
+                for (int dp = 0; dp < D * P; ++dp) {
+                    if (!indisponivel[c * D * P + dp] && !bloqueado[c * D * P + dp]) livres += salas_livres[dp];
+                }
+                if (menor == -1 || livres < menor) { menor = livres; criticas = {c}; }
+                else if (livres == menor) criticas.push_back(c);
+            }
+            if (criticas.empty()) break;  // grupo terminado
+            int c = criticas[std::uniform_int_distribution<int>(0, (int)criticas.size() - 1)(gerador)];
+            (*grupo)[c]--;
+
+            // Posições livres da disciplina, separadas pela classe da sala
+            std::vector<int> candidatas[4];
+            for (int dp = 0; dp < D * P; ++dp) {
+                if (indisponivel[c * D * P + dp] || bloqueado[c * D * P + dp]) continue;
+                for (int r = 0; r < R; ++r) {
+                    if (nova.matriz[dp / P][dp % P][r] == -1) candidatas[classe[c * R + r]].push_back(dp * R + r);
+                }
+            }
+
+            // Com probabilidade 0,5 a preferência é 1 → 2 → 3; senão, 2 → 1 → 3 (dentro da classe, sorteio)
+            int ordem[3] = {1, 2, 3};
+            if (std::uniform_int_distribution<int>(0, 1)(gerador)) std::swap(ordem[0], ordem[1]);
+            int escolhida = -1;
+            for (int k : ordem) {
+                if (!candidatas[k].empty()) {
+                    escolhida = candidatas[k][std::uniform_int_distribution<int>(0, (int)candidatas[k].size() - 1)(gerador)];
+                    break;
+                }
+            }
+
+            int dp = escolhida / R, r = escolhida % R;
+            if (escolhida == -1 || !nova.alocar_aula(dp / P, dp % P, r, c)) {
+                nao_alocadas.push_back(c);  // nenhuma posição livre: a aula fica de fora
+                continue;
+            }
+            salas_livres[dp]--;
+            for (int o = 0; o < C; ++o) {
+                if (conflitam(c, o)) bloqueado[o * D * P + dp] = 1;
+            }
+        }
+    }
+
+    if ((int)nao_alocadas.size() > max_nao_alocadas) return {false, nao_alocadas};  // pior: mantém a grade atual
+    matriz.swap(nova.matriz);
+    matriz_professor_ocupado.swap(nova.matriz_professor_ocupado);
+    matriz_curriculo_ocupado.swap(nova.matriz_curriculo_ocupado);
+    return {true, nao_alocadas};
 }

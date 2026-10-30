@@ -59,6 +59,9 @@ public:
     int tamanho_dominio(int disciplina_indice) const;
     int grau_conflitos(int disciplina_indice) const;
 
+    // Reconstrução reativa de Geiger (§3.3); devolve (trocou a grade?, aulas que ficaram de fora)
+    std::pair<bool, std::vector<int>> reconstruir(const std::vector<int>& prioritarias, unsigned int semente, int max_nao_alocadas);
+
 };
 
 #endif

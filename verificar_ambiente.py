@@ -127,6 +127,18 @@ if core_otimizador.Parser.carregar_ctt(caminho_instancia, instancia):
     print(f" -> Conflitos da c0024 em (1, 0, 0): {posicoes[(1, 0, 0)]} (Esperado: [] - posição livre e sem conflito)")
     print(f" -> Posições da c0024 no dia 3 (indisponível): {sum(1 for (d, p, s) in posicoes if d == 3)} (Esperado: 0)")
 
+    # -----------------------------------------------------------------
+    # TESTE 10: RECONSTRUÇÃO REATIVA (FASE 1, INSPIRADA EM GEIGER)
+    # -----------------------------------------------------------------
+    print("\nTESTE 10: Validando a reconstrução reativa usada na Fase 1...")
+    grade_rec = core_otimizador.GradeHoraria(instancia)
+    aceitou, fora = grade_rec.reconstruir([], 1, -1)  # limite impossível: a grade não pode ser trocada
+    print(f" -> Com limite -1, a grade foi trocada? {aceitou} (Esperado: False); aulas na grade: "
+          f"{sum(1 for d in range(5) for p in range(6) for s in range(6) if grade_rec.obter_disciplina_na_gaveta(d, p, s) != -1)} (Esperado: 0)")
+    aceitou, fora = grade_rec.reconstruir([], 1, 1000)
+    print(f" -> Reconstrução do comp01 (semente 1): trocou {aceitou}, aulas de fora {len(fora)}, grade completa "
+          f"{grade_rec.validar_alocacao_completa()} (Esperado: True, 0, True - o comp01 fecha em 20 de 20 sementes)")
+
     print("\n" + "=" * 60)
     print("FIM DO ROTEIRO: AMBIENTE INTEGRADO E FUNCIONANDO SEM ERROS!")
     print("=" * 60)

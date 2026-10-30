@@ -10,8 +10,7 @@ import json
 
 # AÇÕES QUE PODEM AGIR EM CADA FASE (máscara de ações), indexadas por viavel
 ACOES_POR_FASE = {
-    0: [5],           # Fase 1 (grade incompleta): reparo por conflitos (Müller). O R&R (A2) sai da máscara
-                      # e será substituído pela reconstrução de Geiger na etapa 4
+    0: [2, 5],        # Fase 1 (grade incompleta): reconstrução reativa (Geiger) ou reparo por conflitos (Müller)
     1: [0, 1, 3, 4],  # Fase 2 (grade completa): ações de otimização do custo
 }
 
@@ -33,24 +32,29 @@ class AgenteQLearning:
         self.lista_tabu = collections.deque(maxlen=20)
         self.cbs = collections.Counter()  # Conflict-based Statistics (Müller): vezes que cada colocação desalocou cada aula
 
-    def obter_estado(self, grade):
+    def obter_estado(self, grade, qtd_pendentes):
         """ Extrai a representação discreta (S) do ambiente C++ """
         # 1. Viabilidade (0 ou 1)
         viavel = 1 if grade.validar_alocacao_completa() else 0
-        
-        # 2. Gargalo Quantitativo (Discretização do Custo)
-        # Vamos dividir o custo em 5 níveis (0 a 4)
-        total_custo = grade.calcular_total_penalidades()
-        if total_custo == 0: custo_bin = 0
-        elif total_custo < 500: custo_bin = 1
-        elif total_custo < 1000: custo_bin = 2
-        elif total_custo < 1500: custo_bin = 3
-        else: custo_bin = 4
-            
+
+        # 2. Nível: na Fase 1, quantas aulas faltam; na Fase 2, o custo (5 faixas)
+        if not viavel:
+            if qtd_pendentes <= 2: nivel = 1
+            elif qtd_pendentes <= 5: nivel = 2
+            elif qtd_pendentes <= 10: nivel = 3
+            else: nivel = 4
+        else:
+            total_custo = grade.calcular_total_penalidades()
+            if total_custo == 0: nivel = 0
+            elif total_custo < 500: nivel = 1
+            elif total_custo < 1000: nivel = 2
+            elif total_custo < 1500: nivel = 3
+            else: nivel = 4
+
         # 3. Estagnação
         estagnado = 1 if self.iteracoes_sem_melhora > 50 else 0
-        
-        return (viavel, custo_bin, estagnado) # trocar estagnado para 0 para testar sem o estado
+
+        return (viavel, nivel, estagnado) # trocar estagnado para 0 para testar sem o estado
 
     def escolher_acao(self, estado):
         """ Política Epsilon-Greedy restrita às ações que podem agir na fase do estado """
@@ -156,22 +160,15 @@ def aplicar_heuristica_baixo_nivel(acao, grade, instancia, aulas_pendentes, agen
         grade.alocar_aula(pior_d, pior_p, pior_s, pior_disc)
         return False
                 
-    elif acao == 2: 
-        # [A2] RUIN-AND-RECREATE (Geiger)
-        if not aulas_pendentes: return False 
-        disc_alvo = aulas_pendentes[0] 
-        d, p, s = random.randint(0, instancia.qtd_dias - 1), random.randint(0, instancia.periodos_por_dia - 1), random.randint(0, instancia.qtd_salas - 1)
-        disc_na_gaveta = grade.obter_disciplina_na_gaveta(d, p, s)
-        
-        if disc_na_gaveta != -1:
-            grade.remover_aula(d, p, s)
-            if grade.alocar_aula(d, p, s, disc_alvo):
-                aulas_pendentes.pop(0); aulas_pendentes.append(disc_na_gaveta); return True
-            grade.alocar_aula(d, p, s, disc_na_gaveta)
-            return False
-        if grade.alocar_aula(d, p, s, disc_alvo):
-            aulas_pendentes.pop(0); return True
-        return False
+    elif acao == 2:
+        # [A2] RECONSTRUÇÃO REATIVA (Geiger §3.3)
+        if not aulas_pendentes: return False
+        # Refaz a grade do zero, com as aulas pendentes primeiro; o C++ só troca a grade se não ficarem
+        # mais aulas de fora do que agora. A semente vem do gerador do Python (uma seed só por execução)
+        aceitou, nao_alocadas = grade.reconstruir(aulas_pendentes, random.getrandbits(32), len(aulas_pendentes))
+        if aceitou:
+            aulas_pendentes[:] = nao_alocadas
+        return aceitou
         
     elif acao == 3:
         # [A3] TABU-SWAP
@@ -295,6 +292,8 @@ def ler_argumentos():
     parser.add_argument("--tempo", type=float, default=65.0, help="limite em segundos (benchmark ITC: 65)")
     parser.add_argument("--iteracoes", type=int, help="para por iterações em vez de tempo (execução repetível)")
     parser.add_argument("--saida", help="padrão: resultados/<dataset>/<instancia>_seed<seed>.sol")
+    parser.add_argument("--politica", choices=["qlearning", "aleatoria"], default="qlearning",
+                        help="aleatoria: escolhe ao acaso entre as ações válidas (ε fixo em 1), para comparação")
     return parser.parse_args()
 
 # SAÍDA NO FORMATO DA COMPETIÇÃO
@@ -349,7 +348,7 @@ def main():
         return
 
     print("=" * 60)
-    print(f"Q-LEARNING | instância {nome} | seed {seed} | parada: {criterio}")
+    print(f"Q-LEARNING | instância {nome} | seed {seed} | parada: {criterio} | política: {args.politica}")
     print("=" * 60)
 
     grade = core_otimizador.GradeHoraria(instancia)
@@ -357,6 +356,9 @@ def main():
 
     # Dificuldade de cada disciplina para a IFS: domínio pequeno e muitos conflitos = difícil (estática, calculada uma vez)
     agente.dificuldade = [grade.tamanho_dominio(c) / max(1, grade.grau_conflitos(c)) for c in range(instancia.qtd_disciplinas)]
+
+    if args.politica == "aleatoria":
+        agente.epsilon_inicial = agente.epsilon_min = 1.0  # ε fica em 1 durante toda a execução
 
     # 1. GERAÇÃO INICIAL
     aulas_pendentes = gerar_solucao_inicial_gulosa(grade, instancia)
@@ -373,6 +375,7 @@ def main():
     melhor_grade = copy.deepcopy(grade)  # cópia feita no C++
     melhor_em = time.perf_counter() - inicio  # segundo em que a melhor solução foi encontrada
     viavel_em = None  # (iteração, segundos) em que a grade ficou completa pela primeira vez
+    escolhas = {0: collections.Counter(), 1: collections.Counter()}  # ações escolhidas em cada fase
     proximo_log = 0.05
 
     iteracao = 0
@@ -386,8 +389,9 @@ def main():
             break
         iteracao += 1
 
-        estado_atual = agente.obter_estado(grade)
+        estado_atual = agente.obter_estado(grade, len(aulas_pendentes))
         acao = agente.escolher_acao(estado_atual)
+        escolhas[estado_atual[0]][acao] += 1
 
         # 2. APLICA A AÇÃO
         alterou = aplicar_heuristica_baixo_nivel(acao, grade, instancia, aulas_pendentes, agente)
@@ -395,7 +399,7 @@ def main():
         # 3. ATUALIZA AS MÉTRICAS
         qtd_pendentes_novo = len(aulas_pendentes)
         custo_novo = grade.calcular_total_penalidades()
-        estado_novo = agente.obter_estado(grade)
+        estado_novo = agente.obter_estado(grade, qtd_pendentes_novo)
 
         if (qtd_pendentes_novo, custo_novo) < melhor:
             melhor = (qtd_pendentes_novo, custo_novo)
@@ -449,7 +453,8 @@ def main():
         "tempo_total": round(time.perf_counter() - inicio, 2),
         "tempo_melhor": round(melhor_em, 2),
         "tempo_viavel": round(viavel_em[1], 2) if viavel_em else None,
-        "pendentes": melhor[0], "custo": melhor[1]}))
+        "pendentes": melhor[0], "custo": melhor[1],
+        "escolhas_fase1": dict(escolhas[0]), "escolhas_fase2": dict(escolhas[1])}))
 
 
 if __name__ == "__main__":

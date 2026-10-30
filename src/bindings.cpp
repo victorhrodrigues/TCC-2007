@@ -51,5 +51,6 @@ PYBIND11_MODULE(core_otimizador, m) {
         .def("obter_pior_gargalo", &GradeHoraria::obter_pior_gargalo)
         .def("conflitos_por_posicao", &GradeHoraria::conflitos_por_posicao)
         .def("tamanho_dominio", &GradeHoraria::tamanho_dominio)
-        .def("grau_conflitos", &GradeHoraria::grau_conflitos);
+        .def("grau_conflitos", &GradeHoraria::grau_conflitos)
+        .def("reconstruir", &GradeHoraria::reconstruir);
 }
