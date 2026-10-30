@@ -28,30 +28,32 @@ class AgenteQLearning:
         # Q-Table baseada em dicionário: chave=(viavel, gargalo, estagnado) -> valor=[Q0, Q1, Q2, Q3]
         self.q_table = collections.defaultdict(lambda: [0.0] * num_acoes)
         self.iteracoes_sem_melhora = 0
+        self.custo_referencia = None  # custo da 1ª grade completa: base das faixas da Fase 2
 
         self.lista_tabu = collections.deque(maxlen=20)
         self.cbs = collections.Counter()  # Conflict-based Statistics (Müller): vezes que cada colocação desalocou cada aula
 
-    def obter_estado(self, grade, qtd_pendentes):
+    def obter_estado(self, grade, qtd_pendentes, custo):
         """ Extrai a representação discreta (S) do ambiente C++ """
         # 1. Viabilidade (0 ou 1)
         viavel = 1 if grade.validar_alocacao_completa() else 0
 
-        # 2. Nível: na Fase 1, quantas aulas faltam; na Fase 2, o custo (5 faixas)
+        # 2. Nível: na Fase 1, quantas aulas faltam; na Fase 2, o custo em relação ao da 1ª grade completa
         if not viavel:
             if qtd_pendentes <= 2: nivel = 1
             elif qtd_pendentes <= 5: nivel = 2
             elif qtd_pendentes <= 10: nivel = 3
             else: nivel = 4
         else:
-            total_custo = grade.calcular_total_penalidades()
-            if total_custo == 0: nivel = 0
-            elif total_custo < 500: nivel = 1
-            elif total_custo < 1000: nivel = 2
-            elif total_custo < 1500: nivel = 3
-            else: nivel = 4
+            if self.custo_referencia is None:
+                self.custo_referencia = max(custo, 1)  # 1ª grade completa: início da Fase 2
+            razao = custo / self.custo_referencia
+            if custo == 0: nivel = 0
+            elif razao <= 0.3: nivel = 1
+            elif razao <= 0.5: nivel = 2
+            else: nivel = 3
 
-        # 3. Estagnação
+        # 3. Estagnação: mais de 50 movimentos sem progresso (na Fase 2, o último episódio inteiro sem melhora)
         estagnado = 1 if self.iteracoes_sem_melhora > 50 else 0
 
         return (viavel, nivel, estagnado) # trocar estagnado para 0 para testar sem o estado
@@ -294,6 +296,8 @@ def ler_argumentos():
     parser.add_argument("--saida", help="padrão: resultados/<dataset>/<instancia>_seed<seed>.sol")
     parser.add_argument("--politica", choices=["qlearning", "aleatoria"], default="qlearning",
                         help="aleatoria: escolhe ao acaso entre as ações válidas (ε fixo em 1), para comparação")
+    parser.add_argument("--episodio", type=int, default=1,
+                        help="Fase 2: movimentos por decisão do agente (1 = decide a cada movimento)")
     return parser.parse_args()
 
 # SAÍDA NO FORMATO DA COMPETIÇÃO
@@ -362,7 +366,6 @@ def main():
 
     # 1. GERAÇÃO INICIAL
     aulas_pendentes = gerar_solucao_inicial_gulosa(grade, instancia)
-    qtd_pendentes_anterior = len(aulas_pendentes)
     custo_anterior = grade.calcular_total_penalidades()
     total_exigido = sum(d.num_aulas for d in instancia.disciplinas)
     print(f"Total de aulas exigidas pelo arquivo: {total_exigido}")
@@ -371,12 +374,18 @@ def main():
     agente.lista_tabu = collections.deque(maxlen=max(20, int(total_exigido * 0.1)))
 
     # ELITISMO: melhor grade em ordem lexicográfica (aulas pendentes, custo), como em Geiger (§4.1)
-    melhor = (qtd_pendentes_anterior, custo_anterior)
+    melhor = (len(aulas_pendentes), custo_anterior)
     melhor_grade = copy.deepcopy(grade)  # cópia feita no C++
     melhor_em = time.perf_counter() - inicio  # segundo em que a melhor solução foi encontrada
     viavel_em = None  # (iteração, segundos) em que a grade ficou completa pela primeira vez
-    escolhas = {0: collections.Counter(), 1: collections.Counter()}  # ações escolhidas em cada fase
+    escolhas = {0: collections.Counter(), 1: collections.Counter()}  # decisões em cada fase (na Fase 2, episódios)
+    movimentos_fase2 = collections.Counter()  # Fase 2: movimentos aplicados, por ação
+    melhoras_fase2 = collections.Counter()    # Fase 2: movimentos que baixaram o custo, por ação
     proximo_log = 0.05
+
+    # EPISÓDIOS: na Fase 1 cada decisão vale 1 movimento; na Fase 2, --episodio movimentos (Zhang, Ng et al., 2025)
+    estado_atual = agente.obter_estado(grade, len(aulas_pendentes), custo_anterior)
+    restantes = 0  # movimentos que faltam no episódio atual (0 = hora de decidir)
 
     iteracao = 0
     while True:
@@ -389,17 +398,25 @@ def main():
             break
         iteracao += 1
 
-        estado_atual = agente.obter_estado(grade, len(aulas_pendentes))
-        acao = agente.escolher_acao(estado_atual)
-        escolhas[estado_atual[0]][acao] += 1
+        # 2. DECISÃO: só no início de cada episódio
+        if restantes == 0:
+            acao = agente.escolher_acao(estado_atual)
+            escolhas[estado_atual[0]][acao] += 1
+            restantes = args.episodio if estado_atual[0] == 1 else 1
+            pend_inicio, custo_inicio, alterou_ep = len(aulas_pendentes), custo_anterior, False
 
-        # 2. APLICA A AÇÃO
+        # 3. APLICA A AÇÃO (um movimento)
         alterou = aplicar_heuristica_baixo_nivel(acao, grade, instancia, aulas_pendentes, agente)
+        alterou_ep = alterou_ep or alterou
+        restantes -= 1
 
-        # 3. ATUALIZA AS MÉTRICAS
+        # 4. ATUALIZA AS MÉTRICAS a cada movimento (o elitismo não espera o fim do episódio)
         qtd_pendentes_novo = len(aulas_pendentes)
         custo_novo = grade.calcular_total_penalidades()
-        estado_novo = agente.obter_estado(grade, qtd_pendentes_novo)
+        if estado_atual[0] == 1:
+            movimentos_fase2[acao] += 1
+            if custo_novo < custo_anterior:
+                melhoras_fase2[acao] += 1
 
         if (qtd_pendentes_novo, custo_novo) < melhor:
             melhor = (qtd_pendentes_novo, custo_novo)
@@ -408,19 +425,20 @@ def main():
         if qtd_pendentes_novo == 0 and viavel_em is None:
             viavel_em = (iteracao, time.perf_counter() - inicio)
 
-        # 4. RECOMPENSA E CONTROLE DE ESTAGNAÇÃO
-        recompensa, houve_progresso = calcular_recompensa(estado_atual, alterou, qtd_pendentes_anterior,
-                                                          qtd_pendentes_novo, custo_anterior, custo_novo)
-        if houve_progresso:
-            agente.iteracoes_sem_melhora = 0
-        else:
-            agente.iteracoes_sem_melhora += 1
+        # 5. FIM DO EPISÓDIO: RECOMPENSA, ESTAGNAÇÃO E APRENDIZADO
+        if restantes == 0:
+            recompensa, houve_progresso = calcular_recompensa(estado_atual, alterou_ep, pend_inicio,
+                                                              qtd_pendentes_novo, custo_inicio, custo_novo)
+            if houve_progresso:
+                agente.iteracoes_sem_melhora = 0
+            else:
+                agente.iteracoes_sem_melhora += args.episodio if estado_atual[0] == 1 else 1
+            # O estado novo já sai com a estagnação atualizada, e a próxima decisão é tomada nele
+            estado_novo = agente.obter_estado(grade, qtd_pendentes_novo, custo_novo)
+            agente.atualizar_politica(estado_atual, acao, recompensa, estado_novo)
+            agente.atualizar_epsilon(progresso)
+            estado_atual = estado_novo
 
-        # 5. APRENDIZADO
-        agente.atualizar_politica(estado_atual, acao, recompensa, estado_novo)
-        agente.atualizar_epsilon(progresso)
-
-        qtd_pendentes_anterior = qtd_pendentes_novo
         custo_anterior = custo_novo
 
         # TERMINAL DE ACOMPANHAMENTO: uma linha a cada 5% do orçamento
@@ -453,8 +471,9 @@ def main():
         "tempo_total": round(time.perf_counter() - inicio, 2),
         "tempo_melhor": round(melhor_em, 2),
         "tempo_viavel": round(viavel_em[1], 2) if viavel_em else None,
-        "pendentes": melhor[0], "custo": melhor[1],
-        "escolhas_fase1": dict(escolhas[0]), "escolhas_fase2": dict(escolhas[1])}))
+        "pendentes": melhor[0], "custo": melhor[1], "episodio": args.episodio,
+        "escolhas_fase1": dict(escolhas[0]), "escolhas_fase2": dict(escolhas[1]),
+        "movimentos_fase2": dict(movimentos_fase2), "melhoras_fase2": dict(melhoras_fase2)}))
 
 
 if __name__ == "__main__":
